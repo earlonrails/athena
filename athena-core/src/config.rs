@@ -72,6 +72,10 @@ fn default_terminal_backend() -> String {
 pub struct CronJob {
     pub schedule: String,
     pub query: String,
+    #[serde(default)]
+    pub channel: Option<i64>,
+    #[serde(default)]
+    pub thread: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

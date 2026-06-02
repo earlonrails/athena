@@ -136,7 +136,11 @@ pub async fn run_interactive_loop(mut agent: AIAgent, registry: &ToolRegistry, p
                 
                 // For now, no persistent history passed in, just a stateless run.
                 // In a future PR we will track history.
-                let system_prompt = "You are Athena, a powerful AI assistant running locally on the user's system via an interactive terminal. You have full access to execute terminal commands, read files, and automate tasks through your tools. Do not decline requests to run commands on the user's system. Use your provided tools to accomplish the user's goals.";
+                let system_prompt = "You are Athena, a powerful AI assistant running locally on the user's system via an interactive terminal. You have full access to execute terminal commands, read files, and automate tasks through your tools. Do not decline requests to run commands on the user's system. Use your provided tools to accomplish the user's goals. \
+                \
+                IMPORTANT: You have an internal cron engine that runs jobs automatically. You can configure this by editing ~/.athena/config.yaml under the `cron_jobs` block. Cron jobs execute your conversations internally. You can configure them to report back to Telegram by setting the `channel` (integer) and `thread` (integer) fields on the cron job. \
+                You can also manage skills (in ~/.athena/skills) and plugins (in ~/.athena/plugins) and MCP endpoints. \
+                You have hot-reloading enabled, meaning if you edit config.yaml to add a cron job, the gateway will detect it within 30 seconds and start running it automatically.";
                 match agent.run_conversation(input, Some(system_prompt), registry, provider.clone()).await {
                     Ok(response) => {
                         println!("\n{}\n", response);
