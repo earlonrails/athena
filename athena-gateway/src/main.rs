@@ -1,3 +1,7 @@
+mod discord;
+mod slack;
+mod whatsapp;
+
 use athena_agent::AIAgent;
 use athena_core::logging::{setup_logging, LoggingConfig, Mode};
 use athena_core::config::CronJob;
@@ -20,6 +24,7 @@ pub async fn setup_cron_jobs(
         let job_bot = bot.clone();
         let channel = cron.channel;
         let thread = cron.thread;
+        let delivery = cron.delivery;
 
         // tokio-cron-scheduler requires 6 fields (seconds), but standard cron uses 5.
         // Automatically prepend '0 ' (0 seconds) if it looks like a standard 5-part cron.
@@ -31,6 +36,9 @@ pub async fn setup_cron_jobs(
             let registry_clone = job_registry.clone();
             let query_clone = query.clone();
             let bot_clone = job_bot.clone();
+            let delivery_clone = delivery.clone();
+            let channel_clone = channel.clone();
+            let thread_clone = thread.clone();
 
             Box::pin(async move {
                 info!("Executing cron job: '{}'", query_clone);
@@ -71,24 +79,50 @@ pub async fn setup_cron_jobs(
                 match agent.run_conversation(&query_clone, Some("You are Athena, a powerful AI assistant running locally on the user's system via an internal cron job. You have full access to execute terminal commands, read files, and automate tasks through your tools. You can also modify your own internal cron jobs located in ~/.athena/config.yaml. Use your provided tools to accomplish the user's goals."), &registry_clone, provider).await {
                     Ok(response) => {
                         info!("[Cron Job Completed]\nQuery: {}\nResponse: {}", query_clone, response);
-                        if let Some(chat_id) = channel {
-                            let mut send_request = bot_clone.send_message(teloxide::types::ChatId(chat_id), response);
-                            if let Some(thread_id) = thread {
-                                send_request = send_request.message_thread_id(teloxide::types::ThreadId(teloxide::types::MessageId(thread_id)));
-                            }
-                            if let Err(e) = send_request.await {
-                                error!("Failed to send cron result to Telegram: {}", e);
+                        let deliv = delivery_clone.clone().unwrap_or_else(|| vec!["telegram".to_string()]);
+                        for d in deliv {
+                            match d.as_str() {
+                                "telegram" => {
+                                    if let Some(chat_id_str) = &channel_clone {
+                                        if let Ok(chat_id) = chat_id_str.parse::<i64>() {
+                                            let mut send_request = bot_clone.send_message(teloxide::types::ChatId(chat_id), response.clone());
+                                            if let Some(thread_id_str) = &thread_clone {
+                                                if let Ok(thread_id) = thread_id_str.parse::<i32>() {
+                                                    send_request = send_request.message_thread_id(teloxide::types::ThreadId(teloxide::types::MessageId(thread_id)));
+                                                }
+                                            }
+                                            if let Err(e) = send_request.await {
+                                                error!("Failed to send cron result to Telegram: {}", e);
+                                            }
+                                        }
+                                    }
+                                }
+                                "slack" => {
+                                    if let Some(chan) = &channel_clone {
+                                        crate::slack::send_slack_message(chan, &response, thread_clone.clone()).await;
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }
                     Err(e) => {
                         error!("[Cron Job Error]\nQuery: {}\nError: {}", query_clone, e);
-                        if let Some(chat_id) = channel {
-                            let mut send_request = bot_clone.send_message(teloxide::types::ChatId(chat_id), format!("Cron Job Error: {}", e));
-                            if let Some(thread_id) = thread {
-                                send_request = send_request.message_thread_id(teloxide::types::ThreadId(teloxide::types::MessageId(thread_id)));
+                        let deliv = delivery_clone.clone().unwrap_or_else(|| vec!["telegram".to_string()]);
+                        for d in deliv {
+                            if d == "telegram" {
+                                if let Some(chat_id_str) = &channel_clone {
+                                    if let Ok(chat_id) = chat_id_str.parse::<i64>() {
+                                        let mut send_request = bot_clone.send_message(teloxide::types::ChatId(chat_id), format!("Cron Job Error: {}", e));
+                                        if let Some(thread_id_str) = &thread_clone {
+                                            if let Ok(thread_id) = thread_id_str.parse::<i32>() {
+                                                send_request = send_request.message_thread_id(teloxide::types::ThreadId(teloxide::types::MessageId(thread_id)));
+                                            }
+                                        }
+                                        let _ = send_request.await;
+                                    }
+                                }
                             }
-                            let _ = send_request.await;
                         }
                     }
                 }
@@ -258,6 +292,40 @@ async fn main() {
         },
     );
 
+    // Discord Gateway
+    let discord_registry = arc_registry.clone();
+    tokio::spawn(async move {
+        let token = std::env::var("DISCORD_TOKEN").unwrap_or_default();
+        if !token.is_empty() {
+            info!("Starting Discord gateway...");
+            let intents = serenity::model::gateway::GatewayIntents::GUILD_MESSAGES
+                | serenity::model::gateway::GatewayIntents::DIRECT_MESSAGES
+                | serenity::model::gateway::GatewayIntents::MESSAGE_CONTENT;
+            let mut client = serenity::Client::builder(&token, intents)
+                .event_handler(discord::Handler { registry: discord_registry })
+                .await
+                .expect("Err creating discord client");
+
+            if let Err(why) = client.start().await {
+                error!("Client error: {:?}", why);
+            }
+        }
+    });
+
+    // Webhooks (Slack + WhatsApp)
+    let axum_registry = arc_registry.clone();
+    tokio::spawn(async move {
+        info!("Starting Webhook server on 0.0.0.0:3000");
+        let app = axum::Router::new()
+            .route("/slack/events", axum::routing::post(slack::handle_slack_event))
+            .route("/whatsapp/events", axum::routing::post(whatsapp::handle_whatsapp_event))
+            .with_state(axum_registry);
+        
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    info!("Starting Telegram dispatcher...");
     Dispatcher::builder(bot, handler)
         .dependencies(dptree::deps![arc_registry])
         .enable_ctrlc_handler()

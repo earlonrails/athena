@@ -23,8 +23,8 @@ pub fn run_cron() -> Result<()> {
             } else {
                 let mut msg = String::from("Active Jobs:\n");
                 for (i, job) in config.cron_jobs.iter().enumerate() {
-                    let chan_str = job.channel.map(|c| format!(" (Channel: {})", c)).unwrap_or_default();
-                    let thread_str = job.thread.map(|t| format!(" (Thread: {})", t)).unwrap_or_default();
+                    let chan_str = job.channel.clone().map(|c| format!(" (Channel: {})", c)).unwrap_or_default();
+                    let thread_str = job.thread.clone().map(|t| format!(" (Thread: {})", t)).unwrap_or_default();
                     msg.push_str(&format!("  [{}] '{}' -> {}{}{}\n", i, job.schedule, job.query, chan_str, thread_str));
                 }
                 outro(msg.trim_end())?;
@@ -59,7 +59,7 @@ pub fn run_cron() -> Result<()> {
             if add_channel {
                 let chan_str: String = input("Enter Telegram Channel/Chat ID (e.g. -100123456789)")
                     .interact()?;
-                channel = chan_str.parse().ok();
+                channel = Some(chan_str);
                 
                 let add_thread: bool = confirm("Would you like to route this to a specific thread inside the channel?")
                     .initial_value(false)
@@ -68,7 +68,7 @@ pub fn run_cron() -> Result<()> {
                 if add_thread {
                     let thread_str: String = input("Enter Thread ID (e.g. 1234)")
                         .interact()?;
-                    thread = thread_str.parse().ok();
+                    thread = Some(thread_str);
                 }
             }
 
@@ -77,6 +77,7 @@ pub fn run_cron() -> Result<()> {
                 query: query.clone(),
                 channel,
                 thread,
+                delivery: Some(vec!["telegram".to_string()]),
             });
 
             if save_config(&config).is_ok() {

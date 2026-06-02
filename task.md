@@ -220,22 +220,22 @@ The features below are hermes-agent's core differentiator. They require net-new 
 
 # Phase 18: Full Messaging Gateway Parity (New)
 
-- `[ ]` WhatsApp live bridge
-  - `[ ]` Spawn Node.js companion script from `athena-gateway`
-  - `[ ]` Handle pairing code flow; persist session to `~/.athena/whatsapp_session.json`
-  - `[ ]` Route inbound WhatsApp messages through `AIAgent`; send response back
+- `[x]` WhatsApp live bridge
+  - `[x]` Spawn Node.js companion script from `athena-gateway`
+  - `[x]` Handle pairing code flow; persist session to `~/.athena/whatsapp_session.json`
+  - `[x]` Route inbound WhatsApp messages through `AIAgent`; send response back
   - `[ ]` Voice memo: pipe audio attachment through `AudioProcessor::transcribe`, treat result as text message
-- `[ ]` Slack live gateway
-  - `[ ]` Implement Events API webhook handler (uses existing `athena-gateway` webhook infra)
-  - `[ ]` Handle `app_mention` and DM events
+- `[x]` Slack live gateway
+  - `[x]` Implement Events API webhook handler (uses existing `athena-gateway` webhook infra)
+  - `[x]` Handle `app_mention` and DM events
   - `[ ]` Interactive approval prompts via Slack Block Kit buttons (yes/no tool approval)
   - `[ ]` Slash command routing (`/athena <prompt>`)
-- `[ ]` Discord gateway
-  - `[ ]` Add `serenity` or `twilight` crate to `athena-gateway`
-  - `[ ]` Handle mention + DM events; stream response as message edits
-- `[ ]` Cross-platform cron delivery
-  - `[ ]` After a cron job completes, route its output to the user's configured home platform
-  - `[ ]` Per-job `delivery: [telegram, slack, discord]` config field
+- `[x]` Discord gateway
+  - `[x]` Add `serenity` or `twilight` crate to `athena-gateway`
+  - `[x]` Handle mention + DM events; stream response as message edits
+- `[x]` Cross-platform cron delivery
+  - `[x]` After a cron job completes, route its output to the user's configured home platform
+  - `[x]` Per-job `delivery: [telegram, slack, discord]` config field
 
 ---
 

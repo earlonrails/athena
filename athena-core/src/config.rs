@@ -73,9 +73,11 @@ pub struct CronJob {
     pub schedule: String,
     pub query: String,
     #[serde(default)]
-    pub channel: Option<i64>,
+    pub channel: Option<String>,
     #[serde(default)]
-    pub thread: Option<i32>,
+    pub thread: Option<String>,
+    #[serde(default)]
+    pub delivery: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

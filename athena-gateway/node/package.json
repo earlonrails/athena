@@ -1,0 +1,14 @@
+{
+  "name": "athena-whatsapp",
+  "version": "1.0.0",
+  "description": "WhatsApp bridge for Athena AI",
+  "main": "whatsapp.js",
+  "scripts": {
+    "start": "node whatsapp.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.23.0"
+  }
+}

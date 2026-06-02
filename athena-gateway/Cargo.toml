@@ -15,6 +15,11 @@ athena-providers = { version = "0.1.0", path = "../athena-providers" }
 tokio-cron-scheduler = "0.15.1"
 anyhow = "1.0.102"
 athena-skills = { path = "../athena-skills" }
+axum = "0.7"
+reqwest = { version = "0.12", features = ["json"] }
+serenity = { version = "0.12", default-features = false, features = ["rustls_backend", "client", "gateway", "model"] }
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 
 [dev-dependencies]
 async-trait = "0.1.89"
