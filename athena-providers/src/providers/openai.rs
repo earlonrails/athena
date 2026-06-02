@@ -388,6 +388,7 @@ impl LLMProvider for OpenAIProvider {
                 
                 let tool_calls = choice.delta.tool_calls.as_ref().map(|tcs| {
                     tcs.iter().map(|tc| StreamToolCall {
+                        index: Some(tc.index.try_into().unwrap_or(0)),
                         id: tc.id.clone(),
                         r#type: tc.r#type.as_ref().map(|t| match t {
                             async_openai::types::ChatCompletionToolType::Function => "function".to_string(),

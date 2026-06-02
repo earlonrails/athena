@@ -333,6 +333,7 @@ pub struct StreamDelta {
 /// Tool call in streaming response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamToolCall {
+    pub index: Option<i32>,
     pub id: Option<String>,
     pub r#type: Option<String>,
     pub function: Option<StreamToolFunction>,

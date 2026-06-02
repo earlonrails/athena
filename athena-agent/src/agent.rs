@@ -42,6 +42,54 @@ impl AIAgent {
         registry: &ToolRegistry,
         provider: Arc<dyn LLMProvider>,
     ) -> Result<String, String> {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        
+        let mut self_clone = AIAgent {
+            config: self.config.clone(),
+            budget: crate::IterationBudget::new(self.config.max_iterations as usize),
+            skill_store: self.skill_store.clone(),
+            skill_manager: self.skill_manager.clone(),
+        };
+
+        let user_msg_clone = user_message.to_string();
+        let sys_msg_clone = system_message.map(|s| s.to_string());
+        let registry_clone = registry.clone();
+        let provider_clone = provider.clone();
+
+        tokio::spawn(async move {
+            let _ = self_clone.run_conversation_stream(
+                &user_msg_clone,
+                sys_msg_clone.as_deref(),
+                &registry_clone,
+                provider_clone,
+                tx
+            ).await;
+        });
+
+        let mut final_response = String::new();
+        while let Some(event) = rx.recv().await {
+            match event {
+                crate::events::AgentEvent::FinalResponse(content) => {
+                    final_response = content;
+                }
+                crate::events::AgentEvent::Error(err) => {
+                    return Err(err);
+                }
+                _ => {}
+            }
+        }
+
+        Ok(final_response)
+    }
+
+    pub async fn run_conversation_stream(
+        &mut self,
+        user_message: &str,
+        system_message: Option<&str>,
+        registry: &ToolRegistry,
+        provider: Arc<dyn LLMProvider>,
+        tx: tokio::sync::mpsc::UnboundedSender<crate::events::AgentEvent>,
+    ) -> Result<String, String> {
         let mut messages = Vec::new();
 
         let mut sys_content = system_message.unwrap_or_default().to_string();
@@ -144,7 +192,7 @@ impl AIAgent {
                 max_tokens: None,
                 top_p: None,
                 stop: None,
-                stream: false,
+                stream: true,
                 tools: if has_tools { Some(api_tools) } else { None },
                 tool_choice: if has_tools { Some(athena_providers::ToolChoice::Auto) } else { None },
                 extra_body: std::collections::HashMap::new(),
@@ -152,12 +200,85 @@ impl AIAgent {
                 base_url_override: self.config.base_url.clone(),
             };
 
-            let response = match provider.create_chat_completion(request).await {
-                Ok(resp) => resp,
-                Err(e) => return Err(format!("API Error: {}", e)),
+            let mut stream_res = match provider.create_chat_completion_stream(request).await {
+                Ok(resp) => resp.response,
+                Err(e) => {
+                    let _ = tx.send(crate::events::AgentEvent::Error(format!("API Error: {}", e)));
+                    return Err(format!("API Error: {}", e));
+                }
             };
 
-            let choice = &response.choices[0].message;
+            use futures::StreamExt;
+            let mut final_content = String::new();
+            let mut tool_calls_map: std::collections::BTreeMap<usize, ProviderToolCall> = std::collections::BTreeMap::new();
+
+            while let Some(chunk_res) = stream_res.next().await {
+                let chunk = match chunk_res {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(crate::events::AgentEvent::Error(e.to_string()));
+                        return Err(format!("Stream Error: {}", e));
+                    }
+                };
+                
+                if let Some(delta) = chunk.choices.first().map(|c| &c.delta) {
+                    if let Some(content) = &delta.content {
+                        final_content.push_str(content);
+                        let _ = tx.send(crate::events::AgentEvent::TokenDelta(content.clone()));
+                    }
+                    if let Some(tcs) = &delta.tool_calls {
+                        for tc in tcs {
+                            let idx = tc.index.unwrap_or(0) as usize;
+                            let entry = tool_calls_map.entry(idx).or_insert_with(|| ProviderToolCall {
+                                id: String::new(),
+                                r#type: "function".to_string(),
+                                function: ProviderToolFunction {
+                                    name: String::new(),
+                                    arguments: String::new(),
+                                }
+                            });
+                            if let Some(id) = &tc.id {
+                                entry.id.push_str(id);
+                            }
+                            if let Some(f) = &tc.function {
+                                if let Some(name) = &f.name {
+                                    entry.function.name.push_str(name);
+                                }
+                                if let Some(args) = &f.arguments {
+                                    entry.function.arguments.push_str(args);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut our_tool_calls = Vec::new();
+            for (_, tc) in tool_calls_map {
+                our_tool_calls.push(crate::ToolCall {
+                    id: tc.id.clone(),
+                    call_type: tc.r#type.clone(),
+                    function: crate::FunctionCall {
+                        name: tc.function.name.clone(),
+                        arguments: tc.function.arguments.clone(),
+                    },
+                });
+            }
+
+            let choice = athena_providers::base::ChatMessage {
+                role: athena_providers::base::MessageRole::Assistant,
+                content: final_content.clone(),
+                name: None,
+                tool_calls: if our_tool_calls.is_empty() { None } else { Some(our_tool_calls.iter().map(|tc| ProviderToolCall {
+                    id: tc.id.clone(),
+                    r#type: tc.call_type.clone(),
+                    function: ProviderToolFunction {
+                        name: tc.function.name.clone(),
+                        arguments: tc.function.arguments.clone(),
+                    }
+                }).collect()) },
+                tool_call_id: None,
+            };
 
             let mut our_tool_calls = Vec::new();
             if let Some(ref tcs) = choice.tool_calls {
@@ -186,7 +307,8 @@ impl AIAgent {
                 // Done! Log the session
                 self.log_session_to_db(&messages, system_message);
                 
-                return Ok(choice.content.clone());
+                let _ = tx.send(crate::events::AgentEvent::FinalResponse(final_content.clone()));
+                return Ok(final_content);
             }
 
             // Execute tools concurrently

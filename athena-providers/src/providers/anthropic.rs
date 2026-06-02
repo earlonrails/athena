@@ -496,6 +496,7 @@ impl LLMProvider for AnthropicProvider {
                                 role: None,
                                 content: None,
                                 tool_calls: Some(vec![StreamToolCall {
+                                    index: Some(0),
                                     id,
                                     r#type: Some("function".to_string()),
                                     function: Some(StreamToolFunction {
@@ -528,6 +529,7 @@ impl LLMProvider for AnthropicProvider {
                                     role: None,
                                     content: None,
                                     tool_calls: Some(vec![StreamToolCall {
+                                        index: Some(0),
                                         id: None,
                                         r#type: None,
                                         function: Some(StreamToolFunction {

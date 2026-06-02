@@ -83,6 +83,8 @@ pub async fn run_dashboard() {
         }
     };
 
+    let _ = open::that("http://localhost:8000");
+
     if let Err(e) = axum::serve(listener, app).await {
         println!("Server error: {}", e);
     }
@@ -212,12 +214,26 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             let mut locked_agent = agent_builder.build();
             let dynamic_provider = athena_providers::registry::get_provider(&provider_slug).unwrap_or(state.provider.clone());
 
-            match locked_agent.run_conversation(&text, Some("You are a helpful dashboard assistant."), &state.registry, dynamic_provider).await {
-                Ok(response) => {
-                    let _ = socket.send(axum::extract::ws::Message::Text(response)).await;
-                }
-                Err(e) => {
-                    let _ = socket.send(axum::extract::ws::Message::Text(format!("Error: {}", e))).await;
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            
+            let user_text = text.clone();
+            let reg = state.registry.clone();
+            
+            tokio::spawn(async move {
+                let _ = locked_agent.run_conversation_stream(
+                    &user_text,
+                    Some("You are a helpful dashboard assistant."),
+                    &reg,
+                    dynamic_provider,
+                    tx
+                ).await;
+            });
+
+            while let Some(event) = rx.recv().await {
+                if let Ok(json_str) = serde_json::to_string(&event) {
+                    if socket.send(axum::extract::ws::Message::Text(json_str)).await.is_err() {
+                        break;
+                    }
                 }
             }
         }

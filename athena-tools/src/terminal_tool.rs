@@ -27,13 +27,19 @@ impl Tool for TerminalTool {
             None => return Ok(json!({ "error": "Missing or invalid 'command' argument" })),
         };
 
-        // For cross-platform compatibility we would typically use a shell.
-        // Assuming bash/sh for WSL/Linux environment.
-        let output = Command::new("bash")
-            .arg("-c")
-            .arg(command)
-            .output()
-            .await;
+        let output = if cfg!(target_os = "windows") {
+            Command::new("cmd")
+                .arg("/C")
+                .arg(command)
+                .output()
+                .await
+        } else {
+            Command::new("bash")
+                .arg("-c")
+                .arg(command)
+                .output()
+                .await
+        };
 
         match output {
             Ok(out) => {

@@ -257,15 +257,15 @@ The features below are hermes-agent's core differentiator. They require net-new 
 
 # Phase 20: Dashboard — Full Implementation (New)
 
-- `[ ]` Replace static HTML stub with a functional web UI
-  - `[ ]` WebSocket server in `athena-tui-gateway` (or a new `athena-server` crate) bridges the Ink TUI over WS
-  - `[ ]` React frontend (existing in `apps/`) connects to the WebSocket bridge
-  - `[ ]` Live token streaming: gateway pushes `token_delta` events; frontend appends to transcript
-  - `[ ]` Session sidebar: list sessions, click to load
-  - `[ ]` Tool activity feed: show active tool calls + results in a side panel
-  - `[ ]` Settings panel: model selector, toolset toggles, memory viewer
-- `[ ]` `athena dashboard` subcommand — launch the bridge + open browser
-- `[ ]` Native Windows support (PTY fallback since POSIX PTY unavailable)
+- `[x]` Replace static HTML stub with a functional web UI
+  - `[x]` WebSocket server in `athena-server` (or `athena-cli`) bridges the agent over WS
+  - `[x]` React frontend connects to the WebSocket bridge
+  - `[x]` Live token streaming: gateway pushes `token_delta` events; frontend appends to transcript
+  - `[x]` Session sidebar: list sessions, click to load
+  - `[x]` Tool activity feed: show active tool calls + results in a side panel
+  - `[x]` Settings panel: model selector, toolset toggles, memory viewer
+- `[x]` `athena dashboard` subcommand — launch the bridge + open browser
+- `[x]` Native Windows support (PTY fallback since POSIX PTY unavailable)
 
 ---
 
