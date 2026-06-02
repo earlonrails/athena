@@ -71,6 +71,13 @@ pub fn run_doctor() {
         println!("  ! Warning: Docker is not installed or not in PATH. Container environments won't work.");
     }
 
+    // Check 6: AGENTS.md workspace context
+    if crate::context::load_agents_md().is_some() {
+        println!("  ✓ AGENTS.md context loaded successfully.");
+    } else {
+        println!("  ! Warning: AGENTS.md not found in the workspace or home directory. Athena will not have custom contextual instructions.");
+    }
+
     if issues_found == 0 {
         println!("\n✓ No critical issues found! Your Athena installation looks healthy.");
     } else {

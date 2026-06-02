@@ -14,6 +14,7 @@ dotenvy = "0.15"
 athena-providers = { version = "0.1.0", path = "../athena-providers" }
 tokio-cron-scheduler = "0.15.1"
 anyhow = "1.0.102"
+athena-skills = { path = "../athena-skills" }
 
 [dev-dependencies]
 async-trait = "0.1.89"

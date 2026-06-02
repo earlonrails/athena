@@ -52,6 +52,18 @@ pub async fn setup_cron_jobs(
                     agent_builder = agent_builder.api_key(&key);
                 }
 
+                let athena_home = athena_core::paths::get_athena_home();
+                let db_path = athena_home.join("skills.db");
+                if let (Ok(store), Ok(manager)) = (
+                    athena_skills::SkillStore::new(&db_path),
+                    athena_skills::SkillManager::new(&db_path)
+                ) {
+                    agent_builder = agent_builder.skills(
+                        std::sync::Arc::new(store),
+                        std::sync::Arc::new(manager)
+                    );
+                }
+
                 let mut agent = agent_builder.build();
                 let provider = athena_providers::registry::get_provider(&provider_slug)
                     .unwrap_or_else(|| athena_providers::registry::get_provider("openai").unwrap());
@@ -115,6 +127,18 @@ pub async fn process_gateway_message(
 
     if let Some(key) = api_key {
         agent_builder = agent_builder.api_key(&key);
+    }
+
+    let athena_home = athena_core::paths::get_athena_home();
+    let db_path = athena_home.join("skills.db");
+    if let (Ok(store), Ok(manager)) = (
+        athena_skills::SkillStore::new(&db_path),
+        athena_skills::SkillManager::new(&db_path)
+    ) {
+        agent_builder = agent_builder.skills(
+            std::sync::Arc::new(store),
+            std::sync::Arc::new(manager)
+        );
     }
 
     let mut agent = agent_builder.build();

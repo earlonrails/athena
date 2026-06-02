@@ -14,6 +14,6 @@ fastembed = "3.8" # For local ONNX semantic embedding
 ort-sys = { version = "=2.0.0-rc.4" }
 uuid = { version = "1.8", features = ["v4", "fast-rng"] }
 anyhow = "1.0"
-
+athena-providers = { path = "../athena-providers" }
 
 

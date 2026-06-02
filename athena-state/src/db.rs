@@ -64,6 +64,27 @@ CREATE TABLE IF NOT EXISTS messages (
     codex_message_items TEXT
 );
 
+CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
+    id UNINDEXED,
+    title,
+    content
+);
+
+-- Trigger to insert FTS index when a new message is added
+CREATE TRIGGER IF NOT EXISTS msg_insert_fts AFTER INSERT ON messages
+BEGIN
+    INSERT INTO sessions_fts(id, title, content) 
+    SELECT 
+        new.session_id,
+        (SELECT title FROM sessions WHERE id = new.session_id),
+        new.content
+    WHERE NOT EXISTS (SELECT 1 FROM sessions_fts WHERE id = new.session_id);
+    
+    UPDATE sessions_fts 
+    SET content = content || ' ' || new.content
+    WHERE id = new.session_id AND EXISTS (SELECT 1 FROM sessions_fts WHERE id = new.session_id);
+END;
+
 CREATE TABLE IF NOT EXISTS state_meta (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -72,6 +93,32 @@ CREATE TABLE IF NOT EXISTS state_meta (
 
 pub struct SessionDB {
     conn: Mutex<Connection>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Session {
+    pub id: String,
+    pub title: Option<String>,
+    pub model: Option<String>,
+    pub system_prompt: Option<String>,
+    pub started_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct MessageRow {
+    pub id: i64,
+    pub session_id: String,
+    pub role: String,
+    pub content: Option<String>,
+    pub tool_calls: Option<String>,
+    pub timestamp: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionSummary {
+    pub session_id: String,
+    pub title: Option<String>,
+    pub snippet: String,
 }
 
 impl SessionDB {
@@ -104,6 +151,96 @@ impl SessionDB {
         };
         conn.execute_batch(SCHEMA_SQL)?;
         Ok(())
+    }
+
+    pub fn insert_session(&self, session: &Session) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, source, started_at, title, model, system_prompt) VALUES (?1, 'cli', ?2, ?3, ?4, ?5)",
+            (
+                &session.id,
+                session.started_at,
+                session.title.as_ref(),
+                session.model.as_ref(),
+                session.system_prompt.as_ref(),
+            ),
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_message(&self, msg: &MessageRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, tool_calls, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+            (
+                &msg.session_id,
+                &msg.role,
+                msg.content.as_ref(),
+                msg.tool_calls.as_ref(),
+                msg.timestamp,
+            ),
+        )?;
+        Ok(())
+    }
+
+    pub fn get_session_trajectory(&self, session_id: &str) -> Result<(Session, Vec<MessageRow>)> {
+        let conn = self.conn.lock().unwrap();
+        
+        let mut session_stmt = conn.prepare("SELECT id, title, model, system_prompt, started_at FROM sessions WHERE id = ?1")?;
+        let session = session_stmt.query_row([session_id], |row| {
+            Ok(Session {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                model: row.get(2)?,
+                system_prompt: row.get(3)?,
+                started_at: row.get(4)?,
+            })
+        })?;
+
+        let mut msg_stmt = conn.prepare("SELECT id, session_id, role, content, tool_calls, timestamp FROM messages WHERE session_id = ?1 ORDER BY id ASC")?;
+        let msg_iter = msg_stmt.query_map([session_id], |row| {
+            Ok(MessageRow {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                role: row.get(2)?,
+                content: row.get(3)?,
+                tool_calls: row.get(4)?,
+                timestamp: row.get(5)?,
+            })
+        })?;
+
+        let mut messages = Vec::new();
+        for msg in msg_iter {
+            messages.push(msg?);
+        }
+
+        Ok((session, messages))
+    }
+
+    pub fn search_sessions(&self, query: &str) -> Result<Vec<SessionSummary>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, snippet(sessions_fts, -1, '<b>', '</b>', '...', 64) 
+             FROM sessions_fts 
+             WHERE sessions_fts MATCH ?1 
+             ORDER BY rank LIMIT 10"
+        )?;
+        
+        let fts_query = format!("\"{}\"", query); // basic quoting for FTS5
+        let iter = stmt.query_map([fts_query], |row| {
+            Ok(SessionSummary {
+                session_id: row.get(0)?,
+                title: row.get(1)?,
+                snippet: row.get(2)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for res in iter {
+            results.push(res?);
+        }
+
+        Ok(results)
     }
 }
 

@@ -3,6 +3,8 @@ use crate::{AgentConfig, AIAgent, IterationBudget};
 pub struct AIAgentBuilder {
     config: AgentConfig,
     budget: Option<IterationBudget>,
+    skill_store: Option<std::sync::Arc<athena_skills::SkillStore>>,
+    skill_manager: Option<std::sync::Arc<athena_skills::SkillManager>>,
 }
 
 impl AIAgentBuilder {
@@ -10,6 +12,8 @@ impl AIAgentBuilder {
         Self {
             config: AgentConfig::default(),
             budget: None,
+            skill_store: None,
+            skill_manager: None,
         }
     }
 
@@ -38,11 +42,19 @@ impl AIAgentBuilder {
         self
     }
 
+    pub fn skills(mut self, store: std::sync::Arc<athena_skills::SkillStore>, manager: std::sync::Arc<athena_skills::SkillManager>) -> Self {
+        self.skill_store = Some(store);
+        self.skill_manager = Some(manager);
+        self
+    }
+
     pub fn build(self) -> AIAgent {
         let budget = self.budget.unwrap_or_else(|| IterationBudget::new(self.config.max_iterations));
         AIAgent {
             config: self.config,
             budget,
+            skill_store: self.skill_store,
+            skill_manager: self.skill_manager,
         }
     }
 }

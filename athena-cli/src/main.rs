@@ -1,5 +1,6 @@
 mod interactive;
 mod commands;
+pub mod context;
 
 use clap::Parser;
 use clap::Subcommand;
@@ -162,8 +163,11 @@ enum Commands {
     /// Background skill maintenance (curator) — status, run, pause, pin
     Curator,
 
-    /// Configure external memory provider
-    Memory,
+    /// Configure external memory provider or edit memory file
+    Memory {
+        #[command(subcommand)]
+        command: Option<MemoryCommands>,
+    },
 
     /// Configure which tools are enabled per platform
     Tools,
@@ -234,12 +238,39 @@ enum Commands {
     /// Show configuration
     ConfigShow,
 
+    /// Export a session trajectory to a JSON file
+    Trajectory {
+        #[command(subcommand)]
+        command: Option<TrajectoryCommands>,
+    },
 
+    /// Run the agent headlessly through a list of prompts
+    Batch {
+        /// Run a batch configuration
+        #[arg(long)]
+        config: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MemoryCommands {
+    /// Edit the local MEMORY.md file
+    Edit,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TrajectoryCommands {
+    /// Export a specific session trajectory
+    Export {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        output: Option<String>,
+    },
 }
 
 pub(crate) fn create_agent_builder(config: &athena_core::config::AthenaConfig, args: &Args) -> (athena_agent::AIAgentBuilder, std::sync::Arc<dyn athena_providers::LLMProvider + Send + Sync>) {
     let mut builder = AIAgent::builder();
-
     // Set model if provided globally
     if let Some(model) = &args.model {
         builder = builder.model(model);
@@ -322,7 +353,21 @@ pub(crate) async fn execute_command(args: Args, config: athena_core::config::Ath
 
     match &args.command {
         Some(Commands::Query { query, toolsets, skills }) => {
-            let mut agent = builder.build();
+            let athena_home = athena_core::paths::get_athena_home();
+            let db_path = athena_home.join("skills.db");
+            
+            let mut builder_with_skills = builder;
+            if let (Ok(store), Ok(manager)) = (
+                athena_skills::SkillStore::new(&db_path),
+                athena_skills::SkillManager::new(&db_path)
+            ) {
+                builder_with_skills = builder_with_skills.skills(
+                    std::sync::Arc::new(store),
+                    std::sync::Arc::new(manager)
+                );
+            }
+            
+            let mut agent = builder_with_skills.build();
             let registry = ToolRegistry::new();
             commands::mcp::load_mcp_servers_into_registry(&registry).await;
 
@@ -339,8 +384,10 @@ pub(crate) async fn execute_command(args: Args, config: athena_core::config::Ath
             } else if let Some(global_skills) = &args.skills {
                 println!("Skills specified: {}", global_skills);
             }
-
-            match agent.run_conversation(query, None, &registry, provider).await {
+            println!("Query: {}", query);
+            
+            let system_prompt = crate::context::build_system_prompt();
+            match agent.run_conversation(query, Some(&system_prompt), &registry, provider).await {
                 Ok(response) => {
                     println!("{}", response);
                 }
@@ -383,7 +430,21 @@ pub(crate) async fn execute_command(args: Args, config: athena_core::config::Ath
 
         Some(Commands::Chat) => {
             // Start interactive chat session
-            let agent = builder.build();
+            let athena_home = athena_core::paths::get_athena_home();
+            let db_path = athena_home.join("skills.db");
+            
+            let mut builder_with_skills = builder;
+            if let (Ok(store), Ok(manager)) = (
+                athena_skills::SkillStore::new(&db_path),
+                athena_skills::SkillManager::new(&db_path)
+            ) {
+                builder_with_skills = builder_with_skills.skills(
+                    std::sync::Arc::new(store),
+                    std::sync::Arc::new(manager)
+                );
+            }
+            
+            let agent = builder_with_skills.build();
             let registry = ToolRegistry::new();
             commands::mcp::load_mcp_servers_into_registry(&registry).await;
             interactive::run_interactive_loop(agent, &registry, provider).await;
@@ -500,9 +561,15 @@ pub(crate) async fn execute_command(args: Args, config: athena_core::config::Ath
         Some(Commands::Curator) => {
             commands::curator::run_curator();
         }
-        Some(Commands::Memory) => {
-            if let Err(e) = commands::memory::run_memory() {
-                eprintln!("Error: {}", e);
+        Some(Commands::Memory { command }) => {
+            if let Some(MemoryCommands::Edit) = command {
+                if let Err(e) = commands::memory::run_memory_edit() {
+                    eprintln!("Error: {}", e);
+                }
+            } else {
+                if let Err(e) = commands::memory::run_memory() {
+                    eprintln!("Error: {}", e);
+                }
             }
         }
         Some(Commands::Tools) => {
@@ -560,15 +627,45 @@ pub(crate) async fn execute_command(args: Args, config: athena_core::config::Ath
                 eprintln!("Error: {}", e);
             }
         }
+        Some(Commands::Trajectory { command }) => {
+            if let Some(TrajectoryCommands::Export { session, output }) = command {
+                if let Err(e) = commands::trajectory::run_trajectory_export(session.clone(), output.clone()).await {
+                    eprintln!("Error exporting trajectory: {}", e);
+                }
+            }
+        }
+        Some(Commands::Batch { config: batch_config }) => {
+            let agent = builder.build();
+            let registry = ToolRegistry::new();
+            commands::mcp::load_mcp_servers_into_registry(&registry).await;
+            if let Err(e) = commands::batch::run_batch(batch_config.clone(), agent, registry, provider).await {
+                eprintln!("Error running batch: {}", e);
+            }
+        }
         None => {
             // Run interactive mode
             if let Some(oneshot) = &args.oneshot {
                 // One-shot mode
-                let mut agent = builder.build();
+                let athena_home = athena_core::paths::get_athena_home();
+                let db_path = athena_home.join("skills.db");
+                
+                let mut builder_with_skills = builder;
+                if let (Ok(store), Ok(manager)) = (
+                    athena_skills::SkillStore::new(&db_path),
+                    athena_skills::SkillManager::new(&db_path)
+                ) {
+                    builder_with_skills = builder_with_skills.skills(
+                        std::sync::Arc::new(store),
+                        std::sync::Arc::new(manager)
+                    );
+                }
+                
+                let mut agent = builder_with_skills.build();
                 let registry = ToolRegistry::new();
                 commands::mcp::load_mcp_servers_into_registry(&registry).await;
 
-                match agent.run_conversation(oneshot, None, &registry, provider).await {
+                let system_prompt = crate::context::build_system_prompt();
+                match agent.run_conversation(oneshot, Some(&system_prompt), &registry, provider).await {
                     Ok(response) => {
                         println!("{}", response);
                     }
@@ -583,7 +680,21 @@ pub(crate) async fn execute_command(args: Args, config: athena_core::config::Ath
                 println!("Worktree isolation mode is currently under development (Phase 7).");
             } else {
                 // Regular interactive mode
-                let agent = builder.build();
+                let athena_home = athena_core::paths::get_athena_home();
+                let db_path = athena_home.join("skills.db");
+                
+                let mut builder_with_skills = builder;
+                if let (Ok(store), Ok(manager)) = (
+                    athena_skills::SkillStore::new(&db_path),
+                    athena_skills::SkillManager::new(&db_path)
+                ) {
+                    builder_with_skills = builder_with_skills.skills(
+                        std::sync::Arc::new(store),
+                        std::sync::Arc::new(manager)
+                    );
+                }
+                
+                let agent = builder_with_skills.build();
                 let registry = ToolRegistry::new();
                 commands::mcp::load_mcp_servers_into_registry(&registry).await;
                 interactive::run_interactive_loop(agent, &registry, provider).await;

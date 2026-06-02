@@ -38,5 +38,7 @@ pub mod curator;
 pub mod computer_use;
 pub mod auth;
 pub mod import;
+pub mod trajectory;
+pub mod batch;
 
 // Rust guideline compliant 2026-02-21

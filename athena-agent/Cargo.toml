@@ -11,10 +11,12 @@ tracing = "0.1"
 tiktoken-rs = "0.5"
 async-trait = "0.1.74"
 futures = "0.3"
+uuid = { version = "1.0", features = ["v4"] }
 athena-core = { path = "../athena-core" }
 athena-state = { path = "../athena-state" }
 athena-tools = { path = "../athena-tools" }
 athena-providers = { path = "../athena-providers" }
+athena-skills = { path = "../athena-skills" }
 
 [dev-dependencies]
 wiremock = "0.6"

@@ -291,6 +291,8 @@ dependencies = [
  "athena-core",
  "athena-mcp",
  "athena-providers",
+ "athena-skills",
+ "athena-state",
  "athena-tools",
  "axum",
  "chrono",
@@ -305,6 +307,7 @@ dependencies = [
  "rustyline",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tempfile",
  "tokio",
  "tower-http 0.5.2",
@@ -320,6 +323,7 @@ dependencies = [
  "async-trait",
  "athena-core",
  "athena-providers",
+ "athena-skills",
  "athena-state",
  "athena-tools",
  "futures",
@@ -328,6 +332,7 @@ dependencies = [
  "tiktoken-rs",
  "tokio",
  "tracing",
+ "uuid",
  "wiremock",
 ]
 
@@ -389,6 +394,7 @@ dependencies = [
  "athena-agent",
  "athena-core",
  "athena-providers",
+ "athena-skills",
  "athena-tools",
  "dotenvy",
  "teloxide",
@@ -470,6 +476,7 @@ name = "athena-skills"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "athena-providers",
  "fastembed",
  "ort-sys",
  "rusqlite",
@@ -498,6 +505,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "athena-core",
+ "athena-state",
  "inventory",
  "reqwest 0.11.27",
  "serde",

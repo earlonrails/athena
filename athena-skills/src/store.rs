@@ -21,11 +21,16 @@ impl SkillStore {
                 description TEXT NOT NULL,
                 instructions TEXT NOT NULL,
                 embedding BLOB,
+                usage_count INTEGER DEFAULT 0,
+                success_count INTEGER DEFAULT 0,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             )",
             [],
         )?;
+        
+        let _ = conn.execute("ALTER TABLE skills ADD COLUMN usage_count INTEGER DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE skills ADD COLUMN success_count INTEGER DEFAULT 0", []);
         
         info!("Initialized SkillStore DB");
 
@@ -46,13 +51,15 @@ impl SkillStore {
             .collect();
             
         conn.execute(
-            "INSERT OR REPLACE INTO skills (id, name, description, instructions, embedding, created_at, updated_at) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR REPLACE INTO skills (id, name, description, instructions, usage_count, success_count, embedding, created_at, updated_at) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             (
                 &skill.id,
                 &skill.name,
                 &skill.description,
                 &skill.instructions,
+                skill.usage_count,
+                skill.success_count,
                 &embedding_bytes,
                 skill.created_at,
                 skill.updated_at,
@@ -68,7 +75,7 @@ impl SkillStore {
             Err(_) => return Err(rusqlite::Error::InvalidQuery),
         };
         let mut stmt = conn.prepare(
-            "SELECT id, name, description, instructions, created_at, updated_at FROM skills WHERE id = ?1"
+            "SELECT id, name, description, instructions, usage_count, success_count, created_at, updated_at FROM skills WHERE id = ?1"
         )?;
         
         let mut rows = stmt.query([id])?;
@@ -78,12 +85,61 @@ impl SkillStore {
                 name: row.get(1)?,
                 description: row.get(2)?,
                 instructions: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                usage_count: row.get(4).unwrap_or(0),
+                success_count: row.get(5).unwrap_or(0),
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
             }))
         } else {
             Ok(None)
         }
+    }
+
+    pub fn get_all_skills(&self) -> SqliteResult<Vec<Skill>> {
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return Err(rusqlite::Error::InvalidQuery),
+        };
+        let mut stmt = conn.prepare(
+            "SELECT id, name, description, instructions, usage_count, success_count, created_at, updated_at FROM skills"
+        )?;
+        
+        let rows = stmt.query_map([], |row| {
+            Ok(Skill {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                instructions: row.get(3)?,
+                usage_count: row.get(4).unwrap_or(0),
+                success_count: row.get(5).unwrap_or(0),
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })?;
+        
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r?);
+        }
+        Ok(results)
+    }
+
+    pub fn record_use(&self, id: &str) -> SqliteResult<()> {
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return Err(rusqlite::Error::InvalidQuery),
+        };
+        conn.execute("UPDATE skills SET usage_count = usage_count + 1 WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn record_success(&self, id: &str) -> SqliteResult<()> {
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return Err(rusqlite::Error::InvalidQuery),
+        };
+        conn.execute("UPDATE skills SET success_count = success_count + 1 WHERE id = ?1", [id])?;
+        Ok(())
     }
 
     pub fn get_all_embeddings(&self) -> SqliteResult<Vec<(String, Vec<f32>)>> {
@@ -126,6 +182,8 @@ mod tests {
             name: format!("Skill {}", id),
             description: format!("Desc {}", id),
             instructions: format!("Inst {}", id),
+            usage_count: 0,
+            success_count: 0,
             created_at: 1000,
             updated_at: 1000,
         }

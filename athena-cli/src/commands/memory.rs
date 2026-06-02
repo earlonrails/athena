@@ -3,6 +3,7 @@ use cliclack::{intro, select, input, password, outro, note};
 use anyhow::Result;
 
 pub fn run_memory() -> Result<()> {
+    // ... existing ...
     intro("Athena External Memory Provider")?;
     note("Info", "Configure Honcho, Qdrant, or Pinecone semantic retrieval nodes.")?;
 
@@ -50,3 +51,21 @@ pub fn run_memory() -> Result<()> {
 }
 
 // Rust guideline compliant 2026-02-21
+
+pub fn run_memory_edit() -> Result<()> {
+    let memory_path = athena_core::paths::get_athena_home().join("MEMORY.md");
+    if !memory_path.exists() {
+        std::fs::write(&memory_path, "<!-- Write your memory and context here. Athena will automatically inject this into its system prompt. -->\n")?;
+    }
+    
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
+    let status = std::process::Command::new(&editor)
+        .arg(&memory_path)
+        .status()?;
+        
+    if !status.success() {
+        anyhow::bail!("Editor exited with non-zero status");
+    }
+    
+    Ok(())
+}

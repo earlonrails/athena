@@ -57,12 +57,16 @@ impl SkillManager {
         })
     }
 
+    pub fn embed_text(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        let embeddings = self.embed_model.embed(vec![text.to_string()], None)?;
+        Ok(embeddings[0].clone())
+    }
+
     pub fn create_skill(&self, name: &str, description: &str, instructions: &str) -> Result<Skill, anyhow::Error> {
         let text_to_embed = format!("{} {}", description, instructions);
         
         // Generate embedding
-        let embeddings = self.embed_model.embed(vec![text_to_embed], None)?;
-        let embedding = &embeddings[0]; // fastembed returns Vec<f32>
+        let embedding = self.embed_text(&text_to_embed)?;
         
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -74,11 +78,13 @@ impl SkillManager {
             name: name.to_string(),
             description: description.to_string(),
             instructions: instructions.to_string(),
+            usage_count: 0,
+            success_count: 0,
             created_at: now,
             updated_at: now,
         };
         
-        self.store.insert_skill(&skill, embedding)?;
+        self.store.insert_skill(&skill, &embedding)?;
         debug!("Created skill {}", skill.id);
         
         Ok(skill)
@@ -105,6 +111,29 @@ impl SkillManager {
         for (_, id) in top_ids {
             if let Some(skill) = self.store.get_skill(&id)? {
                 results.push(skill);
+            }
+        }
+        
+        Ok(results)
+    }
+
+    pub fn search_with_scores(&self, query_vec: &[f32], top_k: usize) -> Result<Vec<(f32, Skill)>, anyhow::Error> {
+        let all_embeddings = self.store.get_all_embeddings()?;
+        
+        let mut scored_skills: Vec<(f32, String)> = all_embeddings.into_iter().map(|(id, embed)| {
+            let score = Self::cosine_similarity(query_vec, &embed);
+            (score, id)
+        }).collect();
+        
+        // Sort descending by score
+        scored_skills.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        
+        let top_ids = scored_skills.into_iter().take(top_k).collect::<Vec<_>>();
+        
+        let mut results = Vec::new();
+        for (score, id) in top_ids {
+            if let Some(skill) = self.store.get_skill(&id)? {
+                results.push((score, skill));
             }
         }
         

@@ -14,6 +14,8 @@ use athena_providers::{
 pub struct AIAgent {
     pub(crate) config: AgentConfig,
     pub(crate) budget: IterationBudget,
+    pub(crate) skill_store: Option<Arc<athena_skills::SkillStore>>,
+    pub(crate) skill_manager: Option<Arc<athena_skills::SkillManager>>,
 }
 
 impl AIAgent {
@@ -42,8 +44,27 @@ impl AIAgent {
     ) -> Result<String, String> {
         let mut messages = Vec::new();
 
-        if let Some(sys) = system_message {
-            messages.push(Message::System { content: sys.to_string() });
+        let mut sys_content = system_message.unwrap_or_default().to_string();
+        
+        let mut used_skills = Vec::new();
+
+        // 1. Search for relevant skills and inject them into the system prompt
+        if let (Some(store), Some(manager)) = (&self.skill_store, &self.skill_manager) {
+            // we use the user's initial message as the query
+            if let Ok(skills) = manager.search_skills(user_message, 3) {
+                if !skills.is_empty() {
+                    sys_content.push_str("\n\nRELEVANT SKILLS AVAILABLE:\n");
+                    for skill in skills {
+                        sys_content.push_str(&format!("Skill: {}\nDescription: {}\nInstructions:\n{}\n\n", skill.name, skill.description, skill.instructions));
+                        used_skills.push(skill.id.clone());
+                        let _ = store.record_use(&skill.id);
+                    }
+                }
+            }
+        }
+
+        if !sys_content.is_empty() {
+            messages.push(Message::System { content: sys_content });
         }
         messages.push(Message::User { content: user_message.to_string(), name: None });
 
@@ -162,12 +183,15 @@ impl AIAgent {
             api_call_count += 1;
 
             if our_tool_calls.is_empty() {
-                // Done!
+                // Done! Log the session
+                self.log_session_to_db(&messages, system_message);
+                
                 return Ok(choice.content.clone());
             }
 
             // Execute tools concurrently
             let mut handles: Vec<JoinHandle<(String, String)>> = Vec::new();
+            let mut turn_successful = true;
             for tc in &our_tool_calls {
                 let tool_name = tc.function.name.clone();
                 let args_str = tc.function.arguments.clone();
@@ -211,13 +235,125 @@ impl AIAgent {
                 println!("{} {}: {}", icon, tool_name, preview.trim());
 
                 messages.push(Message::Tool {
-                    content: result_str,
+                    content: result_str.clone(),
                     tool_call_id: tool_id,
+                });
+
+                // If any tool result contains "error", we consider the turn unsuccessful
+                if result_str.to_lowercase().contains("error") {
+                    turn_successful = false;
+                }
+            }
+            
+            // Record success for skills used in this turn
+            if turn_successful {
+                if let Some(store) = &self.skill_store {
+                    for skill_id in &used_skills {
+                        let _ = store.record_success(skill_id);
+                    }
+                }
+            }
+        }
+
+        // End of run
+        // Trigger skill synthesis if configured and threshold met
+        if let (Some(store), Some(manager)) = (&self.skill_store, &self.skill_manager) {
+            // Check threshold: e.g. >= 4 api calls means at least 3 tools used
+            if api_call_count >= 4 {
+                let s = store.clone();
+                let m = manager.clone();
+                let p = provider.clone();
+                let mod_name = self.config.model.clone();
+                // Pass the messages from this conversation
+                let mut synthesis_history = Vec::new();
+                for msg in &messages {
+                    match msg {
+                        Message::System { content } => synthesis_history.push(ChatMessage { role: MessageRole::System, content: content.clone(), name: None, tool_calls: None, tool_call_id: None }),
+                        Message::User { content, name } => synthesis_history.push(ChatMessage { role: MessageRole::User, content: content.clone(), name: name.clone(), tool_calls: None, tool_call_id: None }),
+                        Message::Assistant { content, tool_calls, .. } => {
+                            let provider_tool_calls = tool_calls.as_ref().map(|calls| {
+                                calls.iter().map(|tc| ProviderToolCall {
+                                    id: tc.id.clone(), r#type: "function".to_string(),
+                                    function: ProviderToolFunction { name: tc.function.name.clone(), arguments: tc.function.arguments.clone() },
+                                }).collect()
+                            });
+                            synthesis_history.push(ChatMessage { role: MessageRole::Assistant, content: content.clone().unwrap_or_default(), name: None, tool_calls: provider_tool_calls, tool_call_id: None });
+                        },
+                        Message::Tool { content, tool_call_id } => synthesis_history.push(ChatMessage { role: MessageRole::Tool, content: content.clone(), name: None, tool_calls: None, tool_call_id: Some(tool_call_id.clone()) }),
+                    }
+                }
+                
+                tokio::spawn(async move {
+                    if let Err(e) = athena_skills::SkillSynthesizer::synthesize(
+                        synthesis_history,
+                        p.clone(),
+                        &mod_name,
+                        s.clone(),
+                        m.clone(),
+                        0.92,
+                    ).await {
+                        tracing::error!("Error during skill synthesis: {}", e);
+                    }
+                    
+                    if let Err(e) = athena_skills::SkillImprover::run_improvement_pass(
+                        s.clone(),
+                        m.clone(),
+                        p.clone(),
+                        &mod_name,
+                    ).await {
+                        tracing::error!("Error during skill improvement: {}", e);
+                    }
                 });
             }
         }
 
+        self.log_session_to_db(&messages, system_message);
         Err("Max iterations reached".to_string())
+    }
+
+    fn log_session_to_db(&self, messages: &[Message], system_message: Option<&str>) {
+        use athena_state::db::{SessionDB, Session, MessageRow};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        if let Ok(db) = SessionDB::new(None) {
+            let session_id = uuid::Uuid::new_v4().to_string();
+            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64();
+
+            let session = Session {
+                id: session_id.clone(),
+                title: Some("Autonomous Interaction".to_string()),
+                model: Some(self.config.model.clone()),
+                system_prompt: system_message.map(|s| s.to_string()),
+                started_at: timestamp,
+            };
+
+            if let Err(e) = db.insert_session(&session) {
+                tracing::warn!("Failed to insert session: {}", e);
+                return;
+            }
+
+            for msg in messages {
+                let (role, content, tool_calls) = match msg {
+                    Message::System { content } => ("system", Some(content.clone()), None),
+                    Message::User { content, .. } => ("user", Some(content.clone()), None),
+                    Message::Assistant { content, tool_calls, .. } => {
+                        let tc_str = tool_calls.as_ref().map(|tc| serde_json::to_string(tc).unwrap_or_default());
+                        ("assistant", content.clone(), tc_str)
+                    }
+                    Message::Tool { content, .. } => ("tool", Some(content.clone()), None),
+                };
+
+                let msg_row = MessageRow {
+                    id: 0, // auto-incremented
+                    session_id: session_id.clone(),
+                    role: role.to_string(),
+                    content,
+                    tool_calls,
+                    timestamp,
+                };
+                let _ = db.insert_message(&msg_row);
+            }
+        }
     }
 }
 

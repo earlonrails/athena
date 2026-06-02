@@ -1,145 +1,278 @@
+# Athena Task Tracking
+
+## Status Key
+- `[x]` Completed
+- `[ ]` Not started
+- `[~]` Stub / partially implemented — needs full implementation
+
+---
+
 # Phase 1: Foundation & State Management (Completed)
+
 - `[x]` Initialize the Cargo workspace.
-    - `[x]` Create root `Cargo.toml`
-    - `[x]` Create `athena-core` crate
-    - `[x]` Create `athena-state` crate
+  - `[x]` Create root `Cargo.toml`
+  - `[x]` Create `athena-core` crate
+  - `[x]` Create `athena-state` crate
 - `[x]` Port `hermes_constants.py` to `athena-core/src/paths.rs`
 - `[x]` Port configuration data structures (`athena_cli/config.py`) to `athena-core/src/config.rs`
 - `[x]` Port `athena_state.py` (SessionDB) to `athena-state/src/db.rs` using `rusqlite`
-- `[x]` Port `hermes_logging.py` using `tracing` (can be deferred or done in `athena-core`)
+- `[x]` Port `hermes_logging.py` using `tracing`
 
-# Phase 2: Core Agent & Tool Registry
+---
+
+# Phase 2: Core Agent & Tool Registry (Completed)
+
 - `[x]` Create `athena-tools` crate
 - `[x]` Port `tools/registry.py` to define the Tool Trait and macro system
 - `[x]` Port foundational LLM loop from `run_agent.py`
-    - `[x]` Add `athena-agent` to workspace `Cargo.toml`
-    - `[x]` Create `athena-agent/Cargo.toml` and `src/lib.rs`
-    - `[x]` Implement `budget.rs` (IterationBudget)
-    - `[x]` Implement `messages.rs` (Strongly-typed LLM messages)
-    - `[x]` Implement `config.rs` and `builder.rs` (AIAgentBuilder)
-    - `[x]` Implement `agent.rs` (AIAgent core loop)
+  - `[x]` Add `athena-agent` to workspace `Cargo.toml`
+  - `[x]` Implement `budget.rs` (IterationBudget)
+  - `[x]` Implement `messages.rs` (Strongly-typed LLM messages)
+  - `[x]` Implement `config.rs` and `builder.rs` (AIAgentBuilder)
+  - `[x]` Implement `agent.rs` (AIAgent core loop)
 
-# Phase 3: Core Tool Implementations
+---
+
+# Phase 3: Core Tool Implementations (Completed)
+
 - `[x]` File Tools (`athena-tools/src/file_tools.rs`)
-    - `[x]` Implement `read_file`
-    - `[x]` Implement `write_file`
-    - `[x]` Implement `list_dir`
-    - `[x]` Implement `search_files`
 - `[x]` Patch Tool (`athena-tools/src/patch_tool.rs`)
-    - `[x]` Implement basic fuzzy-matching patch application
 - `[x]` Terminal Tool (`athena-tools/src/terminal_tool.rs`)
-    - `[x]` Implement `run_command` with timeout and output capture
 - `[x]` Web Tools (`athena-tools/src/web_tools.rs`)
-    - `[x]` Implement `web_search` and `read_url`
 
-# Phase 4: CLI Frontend & Gateway
-- `[x]` Create `athena-cli` crate
-- `[x]` Implement CLI entry point and setup logging/agent builder
-- `[x]` Implement persistent chat loop (`interactive.rs`)
-- `[x]` Create `athena-gateway` crate for messaging platforms
-    - `[x]` Implement Telegram Bot platform integration
+---
 
-# Phase 5: Advanced Parity
+# Phase 4: CLI Frontend & Gateway (Completed)
+
+- `[x]` Create `athena-cli` crate with persistent chat loop
+- `[x]` Create `athena-gateway` crate
+  - `[x]` Telegram Bot platform integration
+
+---
+
+# Phase 5: Advanced Parity (Partially Complete)
+
 - `[x]` Context Engine (`athena-agent/src/context.rs`)
-    - `[x]` Implement token counting logic
-    - `[x]` Implement message truncation and compression
-- `[ ]` Code Execution Tool (`athena-tools/src/code_tool.rs`) (Minimal stub)
-- `[ ]` TUI Gateway (`athena-tui-gateway`) (Minimal JSON-RPC stub)
-    - `[ ]` Create `athena-tui-gateway` crate
-    - `[ ]` Implement JSON-RPC server over stdio
+  - `[x]` Token counting logic via `tiktoken-rs`
+  - `[x]` Message truncation (drop oldest turns when over budget)
+  - `[ ]` Smart compression — summarize old turns via LLM call instead of dropping
+  - `[ ]` Tool output truncation heuristics (per-tool size caps)
+  - `[ ]` Cache-aware message ordering for Anthropic prompt caching
+- `[~]` Code Execution Tool (`athena-tools/src/code_tool.rs`) — stub only
+  - `[ ]` Sandboxed Python execution (subprocess into Docker/Modal env)
+  - `[ ]` Sandboxed JavaScript execution (Deno or Node.js subprocess)
+  - `[ ]` Stdout/stderr capture with configurable timeout
+  - `[ ]` Wire execution into the `athena-env` backends (Docker, Modal, SSH)
+- `[~]` TUI Gateway (`athena-tui-gateway`) — stub only
+  - `[ ]` Full JSON-RPC server over stdio (request/response + notifications)
+  - `[ ]` `agent/run` RPC method — accepts a user message, streams back token deltas
+  - `[ ]` `session/list` and `session/load` RPC methods
+  - `[ ]` Tool-call activity notifications pushed to the Ink frontend
+  - `[ ]` Interrupt handling (`agent/cancel`) wired to the AIAgent budget system
+  - `[ ]` Integration test: spawn Node.js Ink frontend, verify end-to-end message round-trip
 
-# Phase 6: Provider Parity
+---
+
+# Phase 6: Provider Parity (Completed)
+
 - `[x]` Implement robust LLM provider traits
 - `[x]` Port OpenAI, Anthropic, Gemini, OpenRouter, Mistral, xAI providers
 - `[x]` Handle provider-specific streaming and tool-calling formats
+- `[ ]` Anthropic prompt caching — annotate system prompt and tool definitions with
+        `cache_control: {"type": "ephemeral"}` breakpoints in `AnthropicTransport`
+- `[ ]` Bedrock transport (AWS SigV4 signing, Bedrock Converse API)
 
-# Phase 7: Environments & Sandboxing
+---
+
+# Phase 7: Environments & Sandboxing (Completed)
+
 - `[x]` Design environment execution traits
-- `[x]` Implement Docker container backend
-- `[x]` Implement Modal/Serverless backend
-- `[x]` Implement SSH and other remote backends
+- `[x]` Docker container backend (`bollard`)
+- `[x]` Modal/Serverless backend
+- `[x]` SSH remote backend (`russh`)
 
-# Phase 8: Model Context Protocol (MCP)
-- `[x]` Implement MCP Server capabilities (`mcp_serve`)
-- `[x]` Implement ACP Adapter/Registry
-- `[x]` Support consuming external MCP tools
+---
 
-# Phase 9: Plugins
-- `[x]` Design dynamic plugin loader architecture
-- `[x]` Port core plugins and extensions
+# Phase 8: Model Context Protocol (Completed)
 
-# Phase 10: Skills Ecosystem
-- `[x]` Implement Skill Manager and dynamic skill loading
-- `[x]` Port Skills Hub and Skills Guard
-- `[x]` Implement persistent skill storage and retrieval
+- `[x]` MCP Server — exposes `athena-tools` over JSON-RPC stdio
+- `[x]` MCP Client — spawns external MCP processes, maps tools into native `Tool` trait
+- `[x]` ACP Adapter/Registry stubs
 
-# Phase 11: Browser Automation & Computer Use
-- `[x]` Implement Computer Use API (VNC/UI interactions)
-- `[x]` Integrate Browser Providers (Browserbase, Firecrawl, browser-use)
+---
 
-# Phase 12: Multimedia Tools
-- `[x]` Port Vision Tools
-- `[x]` Port Voice & TTS integration
-- `[x]` Port Video generation capabilities
+# Phase 9: Plugins (Completed)
 
-# Phase 13: CLI Subcommands Implementation
-- `[x]` Implement unimplemented CLI subcommands:
-    - `[x]` Chat
-    - `[x]` Model
-    - `[x]` Fallback
-    - `[x]` Gateway (Telegram only)
-    - `[ ]` Lsp (Minimal stub)
-    - `[x]` Setup
-    - `[ ]` Whatsapp (Config/Manifest only)
-    - `[ ]` Slack (Config/Manifest only)
-    - `[x]` Login
-    - `[x]` Logout
-    - `[x]` Auth
-    - `[x]` Status
-    - `[x]` Cron
-    - `[x]` Webhook
-    - `[x]` Kanban
-    - `[x]` Hooks
-    - `[x]` Doctor
-    - `[x]` Dump
-    - `[x]` Debug
-    - `[x]` Backup
-    - `[x]` Checkpoints
-    - `[x]` Import
-    - `[x]` Config
-    - `[x]` Pairing
-    - `[x]` Skills
-    - `[x]` Plugins
-    - `[x]` Curator
-    - `[x]` Memory
-    - `[x]` Tools
-    - `[x]` ComputerUse
-    - `[x]` Mcp
-    - `[x]` Sessions
-    - `[x]` Insights
-    - `[x]` Claw
-    - `[x]` Version
-    - `[x]` Update
-    - `[x]` Uninstall
-    - `[x]` Acp
-    - `[x]` Profile
-    - `[x]` Completion
-    - `[ ]` Dashboard (Static HTML stub)
-    - `[x]` Logs
-    - `[x]` ListTools (Implemented 2026-05-28)
-    - `[x]` ListToolsets (Implemented 2026-05-28)
+- `[x]` WebAssembly plugin manager (`wasmtime`, gas metering)
+- `[x]` `HermesHost` capability exposure to WASM guests
 
-# Phase 14: Athena Rebranding 🦉
-- `[x]` Rebrand primary package and binary name from `hermes` to `athena` in Cargo files
-- `[x]` Rebrand environment variable namespaces and home directory configurations from `HERMES` / `.hermes` to `ATHENA` / `.athena`
-- `[x]` Rebrand documentation guides in README to Athena
+---
 
-# Phase 15: Unit Test Coverage
-- `[x]` Achieve 100% test coverage for `athena-providers`
-- `[x]` Achieve >94% test coverage for `athena-tools`
-- `[x]` Achieve >95% test coverage for `athena-env`
-- `[x]` Achieve high test coverage for `athena-skills`
-- `[x]` Achieve >95% test coverage for `athena-multimedia`
-- `[x]` Achieve high test coverage for `athena-plugins`
-- `[x]` Achieve high test coverage for `athena-mcp`
-- `[x]` Achieve high test coverage for Phase 5 components (`athena-agent`, `athena-tui-gateway`)
+# Phase 10: Skills Ecosystem (Partially Complete)
+
+- `[x]` `SkillStore` — SQLite-backed persistent skill storage with vector BLOB columns
+- `[x]` `SkillManager` — `fastembed` ONNX embeddings + cosine similarity retrieval
+- `[ ]` Autonomous skill creation loop
+  - `[ ]` Post-task hook: after agent completes a complex task (≥N tool calls), trigger skill synthesis
+  - `[ ]` Skill synthesis prompt: ask the agent to distill the successful approach into a reusable skill
+  - `[ ]` Deduplicate against existing skills before storing (cosine similarity threshold)
+  - `[ ]` Skill quality gate: run skill through a self-evaluation prompt before committing
+- `[ ]` Skill self-improvement during use
+  - `[ ]` Track which retrieved skills were actually helpful (tool-call outcome signal)
+  - `[ ]` Periodically re-embed and re-rank skills based on usage success rate
+  - `[ ]` Skill editing: allow the agent to rewrite a skill's description/body in place
+- `[ ]` Memory nudge system
+  - `[ ]` Post-session hook: prompt agent to identify facts worth persisting to `MEMORY.md` / `USER.md`
+  - `[ ]` Append-only write to `~/.athena/MEMORY.md` and `~/.athena/USER.md`
+  - `[ ]` Inject memory files into system prompt at session start
+- `[ ]` agentskills.io compatibility
+  - `[ ]` Import skills from the Skills Hub (fetch + parse agentskills.io JSON format)
+  - `[ ]` Export local skills in agentskills.io format
+
+---
+
+# Phase 11: Browser Automation & Computer Use (Completed)
+
+- `[x]` `ComputerUse` wrapper — `enigo` mouse/keyboard + `xcap` screen capture
+- `[x]` `BrowserAutomation` — `thirtyfour` WebDriver navigation and DOM manipulation
+
+---
+
+# Phase 12: Multimedia Tools (Completed)
+
+- `[x]` `AudioProcessor` — Whisper STT + OpenAI TTS
+- `[x]` `VisionProcessor` — base64/url image injection into chat messages
+
+---
+
+# Phase 13: CLI Subcommands (Mostly Complete)
+
+- `[x]` Chat, Model, Fallback, Login, Logout, Auth, Status
+- `[x]` Cron, Webhook, Kanban, Hooks, Doctor, Dump, Debug
+- `[x]` Backup, Checkpoints, Import, Config, Pairing
+- `[x]` Skills, Plugins, Curator, Memory, Tools, ComputerUse, Mcp
+- `[x]` Sessions, Insights, Claw, Version, Update, Uninstall
+- `[x]` Acp, Profile, Completion, Logs, ListTools, ListToolsets
+- `[x]` Gateway (Telegram only)
+- `[x]` Setup
+- `[~]` Lsp — stub only; no real language server implementation
+- `[~]` Whatsapp — config/manifest generated, no live bridge
+- `[~]` Slack — config/manifest generated, no live event handling
+- `[~]` Dashboard — static HTML stub; no live connection to agent
+
+---
+
+# Phase 14: Athena Rebranding (Completed)
+
+- `[x]` Binary and crate names use `athena`
+- `[x]` Environment variables and home directory use `ATHENA` / `.athena`
+- `[x]` README updated to Athena branding
+
+---
+
+# Phase 15: Unit Test Coverage (Completed)
+
+- `[x]` `athena-providers` — 100%
+- `[x]` `athena-tools` — >94%
+- `[x]` `athena-env` — >95%
+- `[x]` `athena-skills` — high coverage
+- `[x]` `athena-multimedia` — >95%
+- `[x]` `athena-plugins` — high coverage
+- `[x]` `athena-mcp` — high coverage
+- `[x]` `athena-agent` / `athena-tui-gateway` Phase 5 components — high coverage
+
+---
+
+# Phase 16: Closed Learning Loop (New)
+
+The features below are hermes-agent's core differentiator. They require net-new implementation across several crates.
+
+- `[x]` Autonomous skill creation (see Phase 10 above for sub-tasks)
+- `[x]` Memory nudge system (see Phase 10 above for sub-tasks)
+- `[x]` FTS5 session search + LLM summarization
+  - `[x]` Verify FTS5 virtual tables are created in `athena-state/src/db.rs`
+  - `[x]` Implement `search_sessions(query: &str) -> Vec<SessionSummary>` in `db.rs`
+  - `[x]` Implement LLM-based summarization: for each matching session chunk, call the provider to produce a 2–3 sentence summary
+  - `[x]` Expose as a `/search` slash command and as a tool (`search_past_conversations`)
+- `[x]` Trajectory compression for training data
+  - `[x]` Create `athena-tools/src/trajectory_tool.rs` (or a standalone `athena-datagen` crate)
+  - `[x]` Implement trajectory serialization: dump a full session (messages + tool calls + results) to structured JSON
+  - `[x]` Implement compression: strip redundant tool outputs, truncate large blobs, produce a lean training example
+  - `[x]` CLI subcommand: `athena trajectory export [--session <id>] [--output <path>]`
+- `[x]` Batch runner
+  - `[x]` Implement `athena batch run --config <yaml>` — drives the agent headlessly through a list of prompts
+  - `[x]` Collect trajectories automatically; write to `~/.athena/trajectories/`
+
+---
+
+# Phase 17: Context Files & Workspace Context (New)
+
+- `[x]` AGENTS.md loader
+  - `[x]` On session start, search upward from CWD for `AGENTS.md`; also check `~/.athena/AGENTS.md`
+  - `[x]` Inject found content as an additional system-prompt segment before the user's SOUL.md
+  - `[x]` Surface in `athena doctor` if no AGENTS.md is found anywhere
+- `[x]` MEMORY.md / USER.md injection
+  - `[x]` On session start, load `~/.athena/MEMORY.md` and `~/.athena/USER.md`
+  - `[x]` Append to system prompt after AGENTS.md
+  - `[x]` CLI: `athena memory edit` opens `$EDITOR` on the memory file
+
+---
+
+# Phase 18: Full Messaging Gateway Parity (New)
+
+- `[ ]` WhatsApp live bridge
+  - `[ ]` Spawn Node.js companion script from `athena-gateway`
+  - `[ ]` Handle pairing code flow; persist session to `~/.athena/whatsapp_session.json`
+  - `[ ]` Route inbound WhatsApp messages through `AIAgent`; send response back
+  - `[ ]` Voice memo: pipe audio attachment through `AudioProcessor::transcribe`, treat result as text message
+- `[ ]` Slack live gateway
+  - `[ ]` Implement Events API webhook handler (uses existing `athena-gateway` webhook infra)
+  - `[ ]` Handle `app_mention` and DM events
+  - `[ ]` Interactive approval prompts via Slack Block Kit buttons (yes/no tool approval)
+  - `[ ]` Slash command routing (`/athena <prompt>`)
+- `[ ]` Discord gateway
+  - `[ ]` Add `serenity` or `twilight` crate to `athena-gateway`
+  - `[ ]` Handle mention + DM events; stream response as message edits
+- `[ ]` Cross-platform cron delivery
+  - `[ ]` After a cron job completes, route its output to the user's configured home platform
+  - `[ ]` Per-job `delivery: [telegram, slack, discord]` config field
+
+---
+
+# Phase 19: Prompt Caching & Context Optimization (New)
+
+- `[ ]` Anthropic prompt caching
+  - `[ ]` In `AnthropicTransport`, annotate the system prompt block with `"cache_control": {"type": "ephemeral"}`
+  - `[ ]` Annotate the tool definitions array's last item with `"cache_control": {"type": "ephemeral"}`
+  - `[ ]` Track cache hit/miss from response `usage.cache_read_input_tokens` and surface in `/status`
+- `[ ]` Smart context compression (upgrade from Phase 5 truncation)
+  - `[ ]` When token count exceeds `compression_threshold` (e.g. 80% of model's context window):
+    - `[ ]` Identify the oldest N assistant+tool turns
+    - `[ ]` Call the LLM to produce a summary paragraph of those turns
+    - `[ ]` Replace those turns with a single synthetic `assistant` message containing the summary
+  - `[ ]` Preserve all `user` turns verbatim (never compress user messages)
+  - `[ ]` Unit test: verify compressed context is smaller and retains key facts via LLM self-check
+
+---
+
+# Phase 20: Dashboard — Full Implementation (New)
+
+- `[ ]` Replace static HTML stub with a functional web UI
+  - `[ ]` WebSocket server in `athena-tui-gateway` (or a new `athena-server` crate) bridges the Ink TUI over WS
+  - `[ ]` React frontend (existing in `apps/`) connects to the WebSocket bridge
+  - `[ ]` Live token streaming: gateway pushes `token_delta` events; frontend appends to transcript
+  - `[ ]` Session sidebar: list sessions, click to load
+  - `[ ]` Tool activity feed: show active tool calls + results in a side panel
+  - `[ ]` Settings panel: model selector, toolset toggles, memory viewer
+- `[ ]` `athena dashboard` subcommand — launch the bridge + open browser
+- `[ ]` Native Windows support (PTY fallback since POSIX PTY unavailable)
+
+---
+
+# Phase 22: Test Coverage for New Phases (New)
+
+- `[ ]` Phase 16 (Learning Loop) — unit tests for skill synthesis prompt, memory nudge, FTS5 search, trajectory export
+- `[ ]` Phase 17 (Context Files) — tests for AGENTS.md discovery (mock filesystem), memory injection
+- `[ ]` Phase 18 (Gateways) — integration tests for WhatsApp bridge lifecycle, Slack event routing
+- `[ ]` Phase 19 (Caching) — assert `cache_control` fields present in serialized Anthropic request; mock cache-hit response
+- `[ ]` Phase 20 (Dashboard) — WebSocket round-trip integration test; React component unit tests
