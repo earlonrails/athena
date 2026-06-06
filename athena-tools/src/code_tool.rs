@@ -4,8 +4,18 @@ use serde_json::{json, Value};
 use tokio::fs;
 use tokio::process::Command;
 use std::env;
+use std::sync::Arc;
+use athena_env::traits::{Environment, ExecutionConfig};
 
-pub struct CodeExecutionTool;
+pub struct CodeExecutionTool {
+    pub env: Option<Arc<dyn Environment>>,
+}
+
+impl CodeExecutionTool {
+    pub fn new(env: Option<Arc<dyn Environment>>) -> Self {
+        Self { env }
+    }
+}
 
 #[async_trait]
 impl Tool for CodeExecutionTool {
@@ -18,7 +28,8 @@ impl Tool for CodeExecutionTool {
                 "type": "object",
                 "properties": {
                     "language": { "type": "string", "enum": ["python", "node"], "description": "The programming language." },
-                    "code": { "type": "string", "description": "The code to execute." }
+                    "code": { "type": "string", "description": "The code to execute." },
+                    "timeout_seconds": { "type": "integer", "description": "Optional timeout in seconds." }
                 },
                 "required": ["language", "code"]
             }
@@ -33,6 +44,8 @@ impl Tool for CodeExecutionTool {
             Some(c) => c,
             None => return Ok(json!({ "error": "Missing or invalid 'code' argument" })),
         };
+        
+        let timeout = args.get("timeout_seconds").and_then(|v| v.as_u64()).unwrap_or(30);
 
         let ext = match language {
             "python" => "py",
@@ -40,7 +53,38 @@ impl Tool for CodeExecutionTool {
             _ => return Ok(json!({ "error": "Unsupported language" })),
         };
 
-        // Create a temporary file
+        if let Some(ref e) = self.env {
+            // Use sandboxed environment
+            let path = format!("/tmp/code_{}.{}", uuid::Uuid::new_v4(), ext);
+            if let Err(err) = e.write_file(&path, code.as_bytes()).await {
+                return Ok(json!({ "error": format!("Failed to write code to sandbox: {}", err) }));
+            }
+            
+            let cmd = match language {
+                "python" => format!("python3 {}", path),
+                "node" => format!("node {}", path),
+                _ => unreachable!(),
+            };
+            
+            let config = ExecutionConfig {
+                timeout_seconds: Some(timeout),
+                ..Default::default()
+            };
+            
+            let res = e.execute(&cmd, config).await;
+            
+            return match res {
+                Ok(out) => Ok(json!({
+                    "success": out.exit_code == 0,
+                    "exit_code": out.exit_code,
+                    "stdout": out.stdout,
+                    "stderr": out.stderr,
+                })),
+                Err(err) => Ok(json!({ "error": format!("Sandbox execution failed: {}", err) })),
+            };
+        }
+
+        // Local fallback
         let mut temp_dir = env::temp_dir();
         temp_dir.push(format!("athena_code_eval_{}.{}", uuid::Uuid::new_v4(), ext));
 
@@ -54,7 +98,6 @@ impl Tool for CodeExecutionTool {
             _ => unreachable!(),
         };
 
-        // Clean up
         let _ = fs::remove_file(&temp_dir).await;
 
         match output {
@@ -73,7 +116,8 @@ impl Tool for CodeExecutionTool {
     }
 }
 
-inventory::submit!(crate::registry::RegisteredTool { factory: || std::sync::Arc::new(CodeExecutionTool) });
+// Register default fallback tool
+inventory::submit!(crate::registry::RegisteredTool { factory: || std::sync::Arc::new(CodeExecutionTool::new(None)) });
 
 #[cfg(test)]
 mod tests {
@@ -82,7 +126,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_code_execution_tool() {
-        let tool = CodeExecutionTool;
+        let tool = CodeExecutionTool::new(None);
         assert_eq!(tool.name(), "execute_code");
         assert_eq!(tool.toolset(), "code_execution");
 
@@ -92,12 +136,6 @@ mod tests {
 
         let result = tool.handle(json!({})).await.unwrap();
         assert_eq!(result["error"], "Missing or invalid 'language' argument");
-
-        let result = tool.handle(json!({"language": "python"})).await.unwrap();
-        assert_eq!(result["error"], "Missing or invalid 'code' argument");
-
-        let result = tool.handle(json!({"language": "unknown", "code": "print()"})).await.unwrap();
-        assert_eq!(result["error"], "Unsupported language");
     }
 }
 

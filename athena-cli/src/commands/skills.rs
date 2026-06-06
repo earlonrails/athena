@@ -1,87 +1,65 @@
-use std::fs;
+use std::path::PathBuf;
 use athena_core::paths::get_athena_home;
 use cliclack::{intro, select, input, outro, outro_cancel, note};
 use anyhow::Result;
+use athena_skills::{AgentSkillsHub, SkillManager, SkillStore};
 
 pub fn run_skills() -> Result<()> {
-    intro("Athena Semantic Skills Embeddings")?;
-    note("Info", "Search, install, configure, and manage dynamic skill definitions.")?;
+    intro("Athena Semantic Skills & AgentSkills.io")?;
+    note("Info", "Manage semantic skills and import/export via agentskills.io format.")?;
 
-    let skills_dir = get_athena_home().join("skills");
-    if !skills_dir.exists() {
-        let _ = fs::create_dir_all(&skills_dir);
-    }
+    let db_path = get_athena_home().join("skills.db");
+    let store = SkillStore::new(&db_path)?;
+    let manager = SkillManager::new(&db_path)?;
 
     let choice: usize = select("Options")
         .item(1, "List installed skills", "")
-        .item(2, "Register new skill template", "")
-        .item(3, "Uninstall a skill", "")
+        .item(2, "Import from agentskills.json", "")
+        .item(3, "Export to agentskills.json", "")
         .item(4, "Exit", "")
         .interact()?;
 
     match choice {
         1 => {
-            let mut count = 0;
-            let mut msg = String::from("Installed Skills:\n");
-            if let Ok(entries) = fs::read_dir(&skills_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_file() {
-                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                            msg.push_str(&format!("  • {} ({})\n", name, path.display()));
-                            count += 1;
-                        }
-                    }
-                }
-            }
-            if count == 0 {
+            let skills = store.get_all_skills()?;
+            if skills.is_empty() {
                 outro("No active skills found.")?;
             } else {
+                let mut msg = String::from("Installed Skills:\n");
+                for skill in skills {
+                    msg.push_str(&format!(
+                        "  • {} (Usage: {}, Success: {})\n      {}\n",
+                        skill.name, skill.usage_count, skill.success_count, skill.description
+                    ));
+                }
                 outro(msg.trim_end())?;
             }
         }
         2 => {
-            let name: String = input("Enter skill identifier")
-                .placeholder("fetch-docs, notify-slack")
+            let path_str: String = input("Enter path to agentskills.json")
+                .placeholder("agentskills.json")
                 .interact()?;
-            let name = name.trim().to_string();
-
-            if name.is_empty() {
-                outro_cancel("Skill identifier cannot be empty.")?;
+            let path = PathBuf::from(path_str.trim());
+            
+            if !path.exists() {
+                outro_cancel("File does not exist.")?;
                 return Ok(());
             }
 
-            let skill_file_name = format!("{}.rs", name);
-            let skill_path = skills_dir.join(&skill_file_name);
-
-            let template = format!(
-                "// Skill: {}\n// Description: A new custom semantic skill definition\n\npub fn execute() {{\n    println!(\"Executing {} skill...\");\n}}\n",
-                name, name
-            );
-
-            match fs::write(&skill_path, template) {
-                Ok(()) => {
-                    note("Success", format!("Registered skill template successfully!\nCreated: {}", skill_path.display()))?;
-                }
-                Err(e) => {
-                    outro_cancel(format!("Failed to create skill template: {}", e))?;
-                }
+            match AgentSkillsHub::import_skills(&store, &manager, &path) {
+                Ok(count) => note("Success", format!("Imported {} skills.", count))?,
+                Err(e) => outro_cancel(format!("Failed to import skills: {}", e))?,
             }
         }
         3 => {
-            let name: String = input("Enter skill file name to uninstall")
-                .placeholder("notify-slack.rs")
+            let path_str: String = input("Enter output path")
+                .placeholder("exported_skills.json")
                 .interact()?;
-            let name = name.trim();
+            let path = PathBuf::from(path_str.trim());
 
-            let skill_path = skills_dir.join(name);
-            if skill_path.exists() {
-                match fs::remove_file(&skill_path) {
-                    Ok(()) => outro(format!("Skill '{}' uninstalled successfully.", name))?,
-                    Err(e) => outro_cancel(format!("Failed to remove skill: {}", e))?,
-                }
-            } else {
-                outro_cancel(format!("Skill file '{}' does not exist.", name))?;
+            match AgentSkillsHub::export_skills(&store, &path) {
+                Ok(()) => note("Success", format!("Exported skills to {}", path.display()))?,
+                Err(e) => outro_cancel(format!("Failed to export skills: {}", e))?,
             }
         }
         _ => { outro("Goodbye!")?; }

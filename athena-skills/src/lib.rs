@@ -2,11 +2,15 @@ pub mod store;
 pub mod manager;
 pub mod synthesis;
 pub mod improvement;
+pub mod memory;
+pub mod agentskills;
 
 pub use store::*;
 pub use manager::*;
 pub use synthesis::*;
 pub use improvement::*;
+pub use memory::*;
+pub use agentskills::*;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Skill {

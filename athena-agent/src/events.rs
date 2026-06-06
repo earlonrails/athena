@@ -7,6 +7,7 @@ pub enum AgentEvent {
     ToolCallComplete { id: String, name: String, result: String },
     FinalResponse(String),
     Error(String),
+    TokenUsage { cache_read: u64, cache_creation: u64 },
 }
 
 // Rust guideline compliant 2026-02-21

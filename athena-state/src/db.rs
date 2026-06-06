@@ -282,6 +282,40 @@ mod tests {
         assert!(db.is_ok());
         assert!(temp_dir.path().join(DEFAULT_DB_NAME).exists());
     }
+
+    #[test]
+    fn test_fts5_search() {
+        let db = SessionDB::new(Some(PathBuf::from(":memory:"))).unwrap();
+        
+        let session = Session {
+            id: "sess-1".to_string(),
+            title: Some("My cool session".to_string()),
+            model: Some("gpt-4o".to_string()),
+            system_prompt: None,
+            started_at: 1000.0,
+        };
+        db.insert_session(&session).unwrap();
+        
+        let msg = MessageRow {
+            id: 1,
+            session_id: "sess-1".to_string(),
+            role: "user".to_string(),
+            content: Some("I want to build a rust application".to_string()),
+            tool_calls: None,
+            timestamp: 1001.0,
+        };
+        db.insert_message(&msg).unwrap();
+
+        // Search for "rust"
+        let results = db.search_sessions("rust").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].session_id, "sess-1");
+        assert!(results[0].snippet.contains("<b>rust</b>") || results[0].snippet.contains("rust"));
+        
+        // Search for something not there
+        let results_empty = db.search_sessions("python").unwrap();
+        assert_eq!(results_empty.len(), 0);
+    }
 }
 
 // Rust guideline compliant 2026-02-21

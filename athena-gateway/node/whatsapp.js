@@ -25,13 +25,20 @@ client.on('message', async msg => {
 
     try {
         let text = msg.body;
-        // In the future: handle audio transcription for voice memos
-        // if (msg.hasMedia) { ... }
+        let audio_base64 = null;
 
-        if (text) {
+        if (msg.hasMedia) {
+            const media = await msg.downloadMedia();
+            if (media && media.mimetype && media.mimetype.startsWith('audio/')) {
+                audio_base64 = media.data;
+            }
+        }
+
+        if (text || audio_base64) {
             // Forward to local Athena Gateway
             const response = await axios.post('http://localhost:3000/whatsapp/events', {
-                message: text
+                message: text,
+                audio_base64: audio_base64
             });
 
             if (response.data && response.data.response) {
@@ -40,7 +47,7 @@ client.on('message', async msg => {
         }
     } catch (error) {
         console.error('Error handling message:', error.message);
-        msg.reply('Error: Athena gateway unreachable.');
+        msg.reply('Error: Athena gateway unreachable or processing failed.');
     }
 });
 

@@ -1,4 +1,3 @@
-use std::path::{Path, PathBuf};
 use std::fs;
 use std::env;
 use athena_core::paths::get_athena_home;
@@ -80,6 +79,66 @@ pub fn build_system_prompt() -> String {
     }
 
     prompt
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+    use std::fs;
+
+    #[test]
+    fn test_agents_md_discovery() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Setup mock ~/.athena
+        let athena_home = temp_dir.path().join(".athena");
+        fs::create_dir_all(&athena_home).unwrap();
+        std::env::set_var("ATHENA_HOME", &athena_home);
+        
+        let global_agents_path = athena_home.join("AGENTS.md");
+        fs::write(&global_agents_path, "Global Rules").unwrap();
+
+        // Setup mock workspace
+        let workspace = temp_dir.path().join("workspace");
+        let nested = workspace.join("nested").join("deep");
+        fs::create_dir_all(&nested).unwrap();
+        
+        let workspace_agents_path = workspace.join("AGENTS.md");
+        fs::write(&workspace_agents_path, "Workspace Rules").unwrap();
+
+        // Change current directory to nested
+        let original_dir = env::current_dir().unwrap();
+        env::set_current_dir(&nested).unwrap();
+
+        // Test discovery
+        let agents_md = load_agents_md().unwrap();
+        
+        // Restore cwd so we don't break other tests
+        env::set_current_dir(original_dir).unwrap();
+
+        assert!(agents_md.contains("Workspace Rules"));
+        assert!(agents_md.contains("Global Rules"));
+    }
+
+    #[test]
+    fn test_memory_injection() {
+        let temp_dir = TempDir::new().unwrap();
+        let athena_home = temp_dir.path().join(".athena");
+        fs::create_dir_all(&athena_home).unwrap();
+        std::env::set_var("ATHENA_HOME", &athena_home);
+
+        fs::write(athena_home.join("MEMORY.md"), "Memory fact 1").unwrap();
+        fs::write(athena_home.join("USER.md"), "User prefers X").unwrap();
+
+        let prompt = build_system_prompt();
+
+        assert!(prompt.contains("--- USER CONTEXT ---"));
+        assert!(prompt.contains("User prefers X"));
+        
+        assert!(prompt.contains("--- MEMORY ---"));
+        assert!(prompt.contains("Memory fact 1"));
+    }
 }
 
 // Rust guideline compliant 2026-02-21

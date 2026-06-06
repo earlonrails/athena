@@ -13,3 +13,5 @@ athena-core = { path = "../athena-core" }
 tracing = "0.1"
 dotenvy = "0.15"
 athena-providers = { version = "0.1.0", path = "../athena-providers" }
+tokio-tungstenite = "0.29.0"
+futures = "0.3.32"

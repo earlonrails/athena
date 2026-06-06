@@ -7,6 +7,7 @@ pub struct AgentConfig {
     pub provider: Option<String>,
     pub api_mode: Option<String>,
     pub model: String,
+    pub max_tokens: Option<usize>,
     pub max_iterations: usize,
     pub tool_delay_ms: u64,
     pub enabled_toolsets: Vec<String>,
@@ -26,6 +27,7 @@ impl Default for AgentConfig {
             provider: None,
             api_mode: None,
             model: "anthropic/claude-opus-4.6".to_string(),
+            max_tokens: None,
             max_iterations: 90,
             tool_delay_ms: 1000,
             enabled_toolsets: vec![],
@@ -50,6 +52,7 @@ mod tests {
         assert_eq!(config.provider, None);
         assert_eq!(config.api_mode, None);
         assert_eq!(config.model, "anthropic/claude-opus-4.6");
+        assert_eq!(config.max_tokens, None);
         assert_eq!(config.max_iterations, 90);
         assert_eq!(config.tool_delay_ms, 1000);
         assert!(config.enabled_toolsets.is_empty());

@@ -298,6 +298,8 @@ pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+    pub cache_creation_input_tokens: Option<u64>,
+    pub cache_read_input_tokens: Option<u64>,
 }
 
 /// Streaming response from chat completion
@@ -312,6 +314,7 @@ pub struct StreamChunk {
     pub model: String,
     pub created: Option<u64>,
     pub choices: Vec<StreamChoice>,
+    pub usage: Option<Usage>,
 }
 
 /// A choice in a stream chunk

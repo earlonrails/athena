@@ -315,6 +315,8 @@ impl LLMProvider for OpenAIProvider {
             prompt_tokens: u.prompt_tokens as u64,
             completion_tokens: u.completion_tokens as u64,
             total_tokens: u.total_tokens as u64,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
         });
         
         Ok(ChatCompletionResponse {
@@ -414,10 +416,11 @@ impl LLMProvider for OpenAIProvider {
             }).collect();
             
             Ok(StreamChunk {
-                id: chunk.id,
-                model: chunk.model,
+                id: chunk.id.clone(),
+                model: chunk.model.clone(),
                 created: Some(chunk.created as u64),
                 choices,
+                usage: None,
             })
         });
         

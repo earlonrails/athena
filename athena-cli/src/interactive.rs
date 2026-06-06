@@ -95,6 +95,7 @@ pub async fn run_interactive_loop(mut agent: AIAgent, registry: &ToolRegistry, p
         voice_mode: false,
         tts_mode: false,
         active_skin: String::from("default"),
+        cache_read_tokens: 0,
     };
     
     println!("🦉 Athena Interactive Agent Session (v{})", env!("CARGO_PKG_VERSION"));
@@ -137,15 +138,41 @@ pub async fn run_interactive_loop(mut agent: AIAgent, registry: &ToolRegistry, p
                 // For now, no persistent history passed in, just a stateless run.
                 // In a future PR we will track history.
                 let system_prompt = crate::context::build_system_prompt();
-                match agent.run_conversation(input, Some(&system_prompt), registry, provider.clone()).await {
-                    Ok(response) => {
-                        println!("\n{}\n", response);
-                    }
-                    Err(e) => {
-                        error!("Agent error: {}", e);
-                        println!("Error: {}", e);
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                let mut agent_clone = agent.clone();
+                let provider_clone = provider.clone();
+                let registry_clone = registry.clone();
+                let input_clone = input.to_string();
+                
+                tokio::spawn(async move {
+                    let _ = agent_clone.run_conversation_stream(
+                        &input_clone,
+                        Some(&system_prompt),
+                        &registry_clone,
+                        provider_clone,
+                        tx,
+                    ).await;
+                });
+                
+                use std::io::Write;
+                println!();
+                while let Some(event) = rx.recv().await {
+                    match event {
+                        athena_agent::events::AgentEvent::TokenDelta(content) => {
+                            print!("{}", content);
+                            let _ = std::io::stdout().flush();
+                        }
+                        athena_agent::events::AgentEvent::TokenUsage { cache_read, .. } => {
+                            state.cache_read_tokens += cache_read;
+                        }
+                        athena_agent::events::AgentEvent::Error(e) => {
+                            error!("Agent error: {}", e);
+                            println!("\nError: {}", e);
+                        }
+                        _ => {}
                     }
                 }
+                println!("\n");
             }
             Err(ReadlineError::Interrupted) => {
                 println!("CTRL-C");
@@ -163,13 +190,27 @@ pub async fn run_interactive_loop(mut agent: AIAgent, registry: &ToolRegistry, p
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SessionState {
     pub title: String,
     pub turn_count: usize,
     pub voice_mode: bool,
     pub tts_mode: bool,
     pub active_skin: String,
+    pub cache_read_tokens: u64,
+}
+
+impl Default for SessionState {
+    fn default() -> Self {
+        Self {
+            title: String::from("Untitled Session"),
+            turn_count: 0,
+            voice_mode: false,
+            tts_mode: false,
+            active_skin: String::from("default"),
+            cache_read_tokens: 0,
+        }
+    }
 }
 
 pub async fn process_slash_command(
@@ -245,8 +286,8 @@ pub async fn process_slash_command(
         }
         "/status" => {
             let status = format!(
-                "Title: {}\nModel: {}\nTurns: {}\nVoice: {}\nTTS: {}\nSkin: {}",
-                state.title, model_display, state.turn_count, state.voice_mode, state.tts_mode, state.active_skin
+                "Title: {}\nModel: {}\nTurns: {}\nVoice: {}\nTTS: {}\nSkin: {}\nCache Read Tokens: {}",
+                state.title, model_display, state.turn_count, state.voice_mode, state.tts_mode, state.active_skin, state.cache_read_tokens
             );
             cliclack::note("Session Status", status).unwrap_or(());
         }

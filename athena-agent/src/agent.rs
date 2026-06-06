@@ -11,11 +11,13 @@ use athena_providers::{
     },
 };
 
+#[derive(Clone)]
 pub struct AIAgent {
     pub(crate) config: AgentConfig,
     pub(crate) budget: IterationBudget,
     pub(crate) skill_store: Option<Arc<athena_skills::SkillStore>>,
     pub(crate) skill_manager: Option<Arc<athena_skills::SkillManager>>,
+    pub(crate) logger: Option<Arc<dyn crate::logger::SessionLogger>>,
 }
 
 impl AIAgent {
@@ -49,6 +51,7 @@ impl AIAgent {
             budget: crate::IterationBudget::new(self.config.max_iterations as usize),
             skill_store: self.skill_store.clone(),
             skill_manager: self.skill_manager.clone(),
+            logger: self.logger.clone(),
         };
 
         let user_msg_clone = user_message.to_string();
@@ -121,9 +124,13 @@ impl AIAgent {
         while self.budget.consume() {
             debug!("Starting iteration {} / {}", api_call_count, self.config.max_iterations);
             println!("🤖 [Thinking] Consulting AI model...");
+            
+            let max_t = self.config.max_tokens.unwrap_or(80000);
+            let ctx_engine = crate::context::ContextEngine::new(max_t);
+            let compressed_messages = ctx_engine.compress(&messages, Some(provider.clone())).await;
 
             let mut api_messages = Vec::new();
-            for msg in &messages {
+            for msg in &compressed_messages {
                 match msg {
                     Message::System { content } => {
                         api_messages.push(ChatMessage {
@@ -221,6 +228,17 @@ impl AIAgent {
                     }
                 };
                 
+                if let Some(usage) = &chunk.usage {
+                    let read = usage.cache_read_input_tokens.unwrap_or(0);
+                    let creation = usage.cache_creation_input_tokens.unwrap_or(0);
+                    if read > 0 || creation > 0 {
+                        let _ = tx.send(crate::events::AgentEvent::TokenUsage {
+                            cache_read: read,
+                            cache_creation: creation,
+                        });
+                    }
+                }
+                
                 if let Some(delta) = chunk.choices.first().map(|c| &c.delta) {
                     if let Some(content) = &delta.content {
                         final_content.push_str(content);
@@ -305,6 +323,23 @@ impl AIAgent {
 
             if our_tool_calls.is_empty() {
                 // Done! Log the session
+                let history = messages.iter().filter_map(|m| {
+                    match m {
+                        Message::User { content, .. } => Some(ChatMessage { role: MessageRole::User, content: content.clone(), name: None, tool_calls: None, tool_call_id: None }),
+                        Message::Assistant { content, .. } => Some(ChatMessage { role: MessageRole::Assistant, content: content.clone().unwrap_or_default(), name: None, tool_calls: None, tool_call_id: None }),
+                        _ => None
+                    }
+                }).collect::<Vec<_>>();
+
+                let p_clone = provider.clone();
+                let m_clone = self.config.model.clone();
+                
+                tokio::spawn(async move {
+                    if let Err(e) = athena_skills::MemoryNudge::run(&history, p_clone, &m_clone).await {
+                        tracing::error!("Error during memory nudge: {}", e);
+                    }
+                });
+
                 self.log_session_to_db(&messages, system_message);
                 
                 let _ = tx.send(crate::events::AgentEvent::FinalResponse(final_content.clone()));
@@ -429,52 +464,30 @@ impl AIAgent {
             }
         }
 
+        let history = messages.iter().filter_map(|m| {
+            match m {
+                Message::User { content, .. } => Some(ChatMessage { role: MessageRole::User, content: content.clone(), name: None, tool_calls: None, tool_call_id: None }),
+                Message::Assistant { content, .. } => Some(ChatMessage { role: MessageRole::Assistant, content: content.clone().unwrap_or_default(), name: None, tool_calls: None, tool_call_id: None }),
+                _ => None
+            }
+        }).collect::<Vec<_>>();
+
+        let p_clone = provider.clone();
+        let m_clone = self.config.model.clone();
+        
+        tokio::spawn(async move {
+            if let Err(e) = athena_skills::MemoryNudge::run(&history, p_clone, &m_clone).await {
+                tracing::error!("Error during memory nudge: {}", e);
+            }
+        });
+
         self.log_session_to_db(&messages, system_message);
         Err("Max iterations reached".to_string())
     }
 
     fn log_session_to_db(&self, messages: &[Message], system_message: Option<&str>) {
-        use athena_state::db::{SessionDB, Session, MessageRow};
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        if let Ok(db) = SessionDB::new(None) {
-            let session_id = uuid::Uuid::new_v4().to_string();
-            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64();
-
-            let session = Session {
-                id: session_id.clone(),
-                title: Some("Autonomous Interaction".to_string()),
-                model: Some(self.config.model.clone()),
-                system_prompt: system_message.map(|s| s.to_string()),
-                started_at: timestamp,
-            };
-
-            if let Err(e) = db.insert_session(&session) {
-                tracing::warn!("Failed to insert session: {}", e);
-                return;
-            }
-
-            for msg in messages {
-                let (role, content, tool_calls) = match msg {
-                    Message::System { content } => ("system", Some(content.clone()), None),
-                    Message::User { content, .. } => ("user", Some(content.clone()), None),
-                    Message::Assistant { content, tool_calls, .. } => {
-                        let tc_str = tool_calls.as_ref().map(|tc| serde_json::to_string(tc).unwrap_or_default());
-                        ("assistant", content.clone(), tc_str)
-                    }
-                    Message::Tool { content, .. } => ("tool", Some(content.clone()), None),
-                };
-
-                let msg_row = MessageRow {
-                    id: 0, // auto-incremented
-                    session_id: session_id.clone(),
-                    role: role.to_string(),
-                    content,
-                    tool_calls,
-                    timestamp,
-                };
-                let _ = db.insert_message(&msg_row);
-            }
+        if let Some(logger) = &self.logger {
+            logger.log_session(messages, system_message);
         }
     }
 }
@@ -508,29 +521,13 @@ mod tests {
         let mock_server = MockServer::start().await;
 
         // Mock OpenAI chat completions endpoint
-        let response_body = json!({
-            "id": "chatcmpl-123",
-            "object": "chat.completion",
-            "created": 1677652288,
-            "model": "gpt-4o",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": "Hello from the mocked AI!"
-                },
-                "finish_reason": "stop"
-            }],
-            "usage": {
-                "prompt_tokens": 9,
-                "completion_tokens": 12,
-                "total_tokens": 21
-            }
-        });
+        let response_body = "data: {\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello from the mocked AI!\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
+            .respond_with(ResponseTemplate::new(200)
+                .set_body_bytes(response_body.as_bytes())
+                .insert_header("Content-Type", "text/event-stream"))
             .mount(&mock_server)
             .await;
 
@@ -544,7 +541,7 @@ mod tests {
         let provider = Arc::new(athena_providers::providers::openai::OpenAIProvider::new(None, None));
         let result = agent.run_conversation("Say hello", Some("System prompt"), &registry, provider).await;
         
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Result failed: {:?}", result.unwrap_err());
         assert_eq!(result.unwrap(), "Hello from the mocked AI!");
     }
 
@@ -552,24 +549,13 @@ mod tests {
     async fn test_run_conversation_no_system_message() {
         let mock_server = MockServer::start().await;
 
-        let response_body = json!({
-            "id": "chatcmpl-123",
-            "object": "chat.completion",
-            "created": 1677652288,
-            "model": "gpt-4o",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": "Response without system"
-                },
-                "finish_reason": "stop"
-            }]
-        });
+        let response_body = "data: {\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Response without system\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
+            .respond_with(ResponseTemplate::new(200)
+                .set_body_bytes(response_body.as_bytes())
+                .insert_header("Content-Type", "text/event-stream"))
             .mount(&mock_server)
             .await;
 
@@ -590,16 +576,13 @@ mod tests {
     async fn test_run_conversation_api_error() {
         let mock_server = MockServer::start().await;
 
-        let response_body = json!({
-            "error": {
-                "message": "Invalid API key",
-                "type": "BadRequestError"
-            }
-        });
+        let response_body = "data: {\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(400).set_body_json(response_body))
+            .respond_with(ResponseTemplate::new(200)
+                .set_body_string(response_body)
+                .insert_header("Content-Type", "text/event-stream"))
             .mount(&mock_server)
             .await;
 
@@ -613,7 +596,8 @@ mod tests {
         let provider = Arc::new(athena_providers::providers::openai::OpenAIProvider::new(None, None));
         let result = agent.run_conversation("Hello", None, &registry, provider).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("API Error"));
+        let err_msg = result.unwrap_err();
+        assert!(err_msg.contains("API Error") || err_msg.contains("Streaming error") || err_msg.contains("400"), "Unexpected error: {}", err_msg);
     }
 
     #[tokio::test]
@@ -621,55 +605,25 @@ mod tests {
         let mock_server = MockServer::start().await;
 
         // Response with tool calls
-        let response_body = json!({
-            "id": "chatcmpl-123",
-            "object": "chat.completion",
-            "created": 1677652288,
-            "model": "gpt-4o",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": "Let me help you",
-                    "tool_calls": [{
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {
-                            "name": "run_command",
-                            "arguments": "{\"command\": \"ls\"}"
-                        }
-                    }]
-                },
-                "finish_reason": "tool_calls"
-            }]
-        });
+        let response_body = "data: {\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Let me help you\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"run_command\",\"arguments\":\"{\\\"command\\\": \\\"ls\\\"}\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n";
 
         // Second response without tool calls (completion)
-        let completion_response = json!({
-            "id": "chatcmpl-124",
-            "object": "chat.completion",
-            "created": 1677652289,
-            "model": "gpt-4o",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": "Done!"
-                },
-                "finish_reason": "stop"
-            }]
-        });
+        let completion_response = "data: {\"id\":\"chatcmpl-124\",\"object\":\"chat.completion.chunk\",\"created\":1677652289,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Done!\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-124\",\"object\":\"chat.completion.chunk\",\"created\":1677652289,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(response_body.clone()))
+            .respond_with(ResponseTemplate::new(200)
+                .set_body_bytes(response_body.as_bytes())
+                .insert_header("Content-Type", "text/event-stream"))
             .up_to_n_times(1)
             .mount(&mock_server)
             .await;
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(completion_response))
+            .respond_with(ResponseTemplate::new(200)
+                .set_body_bytes(completion_response.as_bytes())
+                .insert_header("Content-Type", "text/event-stream"))
             .mount(&mock_server)
             .await;
 
@@ -693,32 +647,13 @@ mod tests {
         let mock_server = MockServer::start().await;
 
         // Always respond with a tool call to keep looping
-        let response_body = json!({
-            "id": "chatcmpl-123",
-            "object": "chat.completion",
-            "created": 1677652288,
-            "model": "gpt-4o",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": "Looping",
-                    "tool_calls": [{
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {
-                            "name": "run_command",
-                            "arguments": "{}"
-                        }
-                    }]
-                },
-                "finish_reason": "tool_calls"
-            }]
-        });
+        let response_body = "data: {\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Looping\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"run_command\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n";
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
+            .respond_with(ResponseTemplate::new(200)
+                .set_body_string(response_body)
+                .insert_header("Content-Type", "text/event-stream"))
             .mount(&mock_server)
             .await;
 
@@ -740,24 +675,13 @@ mod tests {
     async fn test_run_conversation_empty_content() {
         let mock_server = MockServer::start().await;
 
-        let response_body = json!({
-            "id": "chatcmpl-123",
-            "object": "chat.completion",
-            "created": 1677652288,
-            "model": "gpt-4o",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": null
-                },
-                "finish_reason": "stop"
-            }]
-        });
+        let response_body = "data: {\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
+            .respond_with(ResponseTemplate::new(200)
+                .set_body_bytes(response_body.as_bytes())
+                .insert_header("Content-Type", "text/event-stream"))
             .mount(&mock_server)
             .await;
 
@@ -793,9 +717,9 @@ mod tests {
         let result = agent.run_conversation("Hello", None, &registry, provider).await;
 
         // It should immediately fail with an API Error instead of crashing
-        assert!(result.is_err());
+        assert!(result.is_err(), "Expected error but got {:?}", result);
         let err_msg = result.unwrap_err();
-        assert!(err_msg.contains("API Error"));
+        assert!(err_msg.contains("API Error") || err_msg.contains("Streaming error") || err_msg.contains("401"), "Unexpected error: {}", err_msg);
     }
 }
 

@@ -5,6 +5,7 @@ pub struct AIAgentBuilder {
     budget: Option<IterationBudget>,
     skill_store: Option<std::sync::Arc<athena_skills::SkillStore>>,
     skill_manager: Option<std::sync::Arc<athena_skills::SkillManager>>,
+    logger: Option<std::sync::Arc<dyn crate::logger::SessionLogger>>,
 }
 
 impl AIAgentBuilder {
@@ -14,6 +15,7 @@ impl AIAgentBuilder {
             budget: None,
             skill_store: None,
             skill_manager: None,
+            logger: None,
         }
     }
 
@@ -48,6 +50,11 @@ impl AIAgentBuilder {
         self
     }
 
+    pub fn logger(mut self, logger: std::sync::Arc<dyn crate::logger::SessionLogger>) -> Self {
+        self.logger = Some(logger);
+        self
+    }
+
     pub fn build(self) -> AIAgent {
         let budget = self.budget.unwrap_or_else(|| IterationBudget::new(self.config.max_iterations));
         AIAgent {
@@ -55,6 +62,7 @@ impl AIAgentBuilder {
             budget,
             skill_store: self.skill_store,
             skill_manager: self.skill_manager,
+            logger: self.logger,
         }
     }
 }

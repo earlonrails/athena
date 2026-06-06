@@ -318,6 +318,8 @@ async fn main() {
         info!("Starting Webhook server on 0.0.0.0:3000");
         let app = axum::Router::new()
             .route("/slack/events", axum::routing::post(slack::handle_slack_event))
+            .route("/slack/commands", axum::routing::post(slack::handle_slack_commands))
+            .route("/slack/interactive", axum::routing::post(slack::handle_slack_interactive))
             .route("/whatsapp/events", axum::routing::post(whatsapp::handle_whatsapp_event))
             .with_state(axum_registry);
         
@@ -423,12 +425,14 @@ mod tests {
                 query: "Test".to_string(),
                 channel: None,
                 thread: None,
+                delivery: None,
             },
             CronJob {
                 schedule: "invalid cron".to_string(), // invalid cron
                 query: "Test".to_string(),
                 channel: None,
                 thread: None,
+                delivery: None,
             }
         ];
 

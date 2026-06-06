@@ -35,8 +35,11 @@ anyhow = "1.0.102"
 axum = { version = "0.7", features = ["ws"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 open = "5.3.5"
+uuid = { version = "1.23.2", features = ["v4"] }
 
 [dev-dependencies]
 async-trait = "0.1.89"
 tempfile = "3.27.0"
 wiremock = "0.6"
+tokio-tungstenite = "0.21.0"
+futures-util = "0.3.30"

@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use serde_json::Value;
-use std::sync::Arc;
 use crate::registry::Tool;
 use athena_state::db::SessionDB;
 use std::fs;
@@ -84,6 +83,74 @@ impl Tool for TrajectoryExportTool {
         fs::write(&file_path, json_str).map_err(|e| e.to_string())?;
 
         Ok(serde_json::json!(format!("Successfully exported compressed trajectory to {}", file_path.display())))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use athena_state::db::{Session, MessageRow};
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_trajectory_export() {
+        let temp_dir = TempDir::new().unwrap();
+        std::env::set_var("ATHENA_HOME", temp_dir.path());
+        
+        let db = SessionDB::new(None).unwrap();
+        
+        let session = Session {
+            id: "traj-session-1".to_string(),
+            title: Some("My Trajectory".to_string()),
+            model: Some("gpt-4o".to_string()),
+            system_prompt: None,
+            started_at: 1000.0,
+        };
+        db.insert_session(&session).unwrap();
+        
+        // Short message
+        let msg1 = MessageRow {
+            id: 1,
+            session_id: "traj-session-1".to_string(),
+            role: "user".to_string(),
+            content: Some("I want to build a rust application".to_string()),
+            tool_calls: None,
+            timestamp: 1001.0,
+        };
+        db.insert_message(&msg1).unwrap();
+
+        // Long tool message to test truncation
+        let long_content = "A".repeat(1500);
+        let msg2 = MessageRow {
+            id: 2,
+            session_id: "traj-session-1".to_string(),
+            role: "tool".to_string(),
+            content: Some(long_content.clone()),
+            tool_calls: None,
+            timestamp: 1002.0,
+        };
+        db.insert_message(&msg2).unwrap();
+
+        let tool = TrajectoryExportTool;
+        let args = serde_json::json!({
+            "session_id": "traj-session-1"
+        });
+
+        let result = tool.handle(args).await;
+        assert!(result.is_ok());
+
+        let export_path = temp_dir.path().join("trajectories").join("traj-session-1.json");
+        assert!(export_path.exists());
+
+        let content = std::fs::read_to_string(export_path).unwrap();
+        let parsed: Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(parsed["session"]["id"], "traj-session-1");
+        assert_eq!(parsed["messages"].as_array().unwrap().len(), 2);
+        
+        let msg2_exported = &parsed["messages"][1]["content"].as_str().unwrap();
+        assert!(msg2_exported.ends_with("[TRUNCATED]"));
+        assert_eq!(msg2_exported.len(), 1000 + 15); // 1000 chars + "... [TRUNCATED]"
     }
 }
 

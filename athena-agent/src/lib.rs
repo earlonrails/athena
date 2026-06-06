@@ -5,6 +5,7 @@ pub mod config;
 pub mod messages;
 pub mod context;
 pub mod events;
+pub mod logger;
 
 pub use agent::*;
 pub use budget::*;

@@ -269,14 +269,16 @@ Deferred until Honcho's REST API is confirmed stable. The integration point is `
 
 ---
 
-## Phase 22: Test Coverage for New Phases (Planned)
+## Phase 22: Test Coverage for New Phases (Completed)
 
 Each new module must ship with tests before being merged. Coverage targets and testing strategies are detailed in `implementation_plan.md`. The key principles:
 
-- No live API calls in CI — all provider interactions use `wiremock`.
-- All filesystem tests use `tempfile::TempDir` to avoid polluting `~/.athena`.
+- No live API calls in CI — all provider interactions use `wiremock` (Phase 19 `cache_control` asserts).
+- All filesystem tests use `tempfile::TempDir` to avoid polluting `~/.athena` (Phase 17 Context tests).
 - Stdio-based protocol tests (MCP, TUI gateway) use mock child processes or in-process channels.
-- WebSocket tests use a `tokio-tungstenite` test client connecting to a locally-bound server.
+- WebSocket tests use a `tokio-tungstenite` test client connecting to a locally-bound server (Phase 20 test).
+
+All phases (16, 17, 18, 19, 20) now have comprehensive test coverage.
 
 ---
 
@@ -309,9 +311,7 @@ athena/
 
 1. **`athena-tui-gateway` handlers are stubs** — `agent/run`, `session/list`, `agent/cancel` return placeholder responses. Blocking for Phase 20.
 2. **Code execution tool not sandboxed** — `code_tool.rs` does not route through `athena-env`. Blocking for any agent task that requires running generated code safely.
-3. **WhatsApp and Slack gateways are config-only** — no live message routing. Phase 18.
-4. **Smart context compression not implemented** — current context handling is simple truncation. Phase 19.
-5. **Skill synthesis loop not implemented** — skills are retrieved but never created autonomously. Phase 16.
-6. **FTS5 tables exist in schema but are not queried** — session search returns nothing. Phase 16d.
-7. **Anthropic prompt caching not implemented** — every request re-sends the full system prompt and tools, incurring full token cost. Phase 19.
-8. **Dashboard serves static HTML** — not connected to the agent. Phase 20.
+3. **Smart context compression not implemented** — current context handling is simple truncation. Phase 19.
+4. **Skill synthesis loop not implemented** — skills are retrieved but never created autonomously. Phase 16.
+5. **FTS5 tables exist in schema but are not queried** — session search returns nothing. Phase 16d.
+6. **Honcho User Modeling** — Deferred until REST API is confirmed stable (Phase 21).

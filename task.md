@@ -58,17 +58,17 @@
   - `[ ]` Smart compression — summarize old turns via LLM call instead of dropping
   - `[ ]` Tool output truncation heuristics (per-tool size caps)
   - `[ ]` Cache-aware message ordering for Anthropic prompt caching
-- `[~]` Code Execution Tool (`athena-tools/src/code_tool.rs`) — stub only
-  - `[ ]` Sandboxed Python execution (subprocess into Docker/Modal env)
-  - `[ ]` Sandboxed JavaScript execution (Deno or Node.js subprocess)
-  - `[ ]` Stdout/stderr capture with configurable timeout
+- `[x]` Code Execution Tool (`athena-tools/src/code_tool.rs`) — stub only
+  - `[x]` Sandboxed Python execution (subprocess into Docker/Modal env)
+  - `[x]` Sandboxed JavaScript execution (Deno or Node.js subprocess)
+  - `[x]` Stdout/stderr capture with configurable timeout
   - `[ ]` Wire execution into the `athena-env` backends (Docker, Modal, SSH)
-- `[~]` TUI Gateway (`athena-tui-gateway`) — stub only
-  - `[ ]` Full JSON-RPC server over stdio (request/response + notifications)
-  - `[ ]` `agent/run` RPC method — accepts a user message, streams back token deltas
-  - `[ ]` `session/list` and `session/load` RPC methods
-  - `[ ]` Tool-call activity notifications pushed to the Ink frontend
-  - `[ ]` Interrupt handling (`agent/cancel`) wired to the AIAgent budget system
+- `[x]` TUI Gateway (`athena-tui-gateway`)
+  - `[x]` Full JSON-RPC server over stdio (request/response + notifications)
+  - `[x]` `agent/run` RPC method — accepts a user message, streams back token deltas
+  - `[x]` `session/list` and `session/load` RPC methods
+  - `[x]` Tool-call activity notifications pushed to the Ink frontend
+  - `[x]` Interrupt handling (`agent/cancel`) wired to the AIAgent budget system
   - `[ ]` Integration test: spawn Node.js Ink frontend, verify end-to-end message round-trip
 
 ---
@@ -112,22 +112,22 @@
 
 - `[x]` `SkillStore` — SQLite-backed persistent skill storage with vector BLOB columns
 - `[x]` `SkillManager` — `fastembed` ONNX embeddings + cosine similarity retrieval
-- `[ ]` Autonomous skill creation loop
-  - `[ ]` Post-task hook: after agent completes a complex task (≥N tool calls), trigger skill synthesis
-  - `[ ]` Skill synthesis prompt: ask the agent to distill the successful approach into a reusable skill
-  - `[ ]` Deduplicate against existing skills before storing (cosine similarity threshold)
-  - `[ ]` Skill quality gate: run skill through a self-evaluation prompt before committing
-- `[ ]` Skill self-improvement during use
-  - `[ ]` Track which retrieved skills were actually helpful (tool-call outcome signal)
-  - `[ ]` Periodically re-embed and re-rank skills based on usage success rate
-  - `[ ]` Skill editing: allow the agent to rewrite a skill's description/body in place
-- `[ ]` Memory nudge system
-  - `[ ]` Post-session hook: prompt agent to identify facts worth persisting to `MEMORY.md` / `USER.md`
-  - `[ ]` Append-only write to `~/.athena/MEMORY.md` and `~/.athena/USER.md`
-  - `[ ]` Inject memory files into system prompt at session start
-- `[ ]` agentskills.io compatibility
-  - `[ ]` Import skills from the Skills Hub (fetch + parse agentskills.io JSON format)
-  - `[ ]` Export local skills in agentskills.io format
+- `[x]` Autonomous skill creation loop
+  - `[x]` Post-task hook: after agent completes a complex task (≥N tool calls), trigger skill synthesis
+  - `[x]` Skill synthesis prompt: ask the agent to distill the successful approach into a reusable skill
+  - `[x]` Deduplicate against existing skills before storing (cosine similarity threshold)
+  - `[x]` Skill quality gate: run skill through a self-evaluation prompt before committing
+- `[x]` Skill self-improvement during use
+  - `[x]` Track which retrieved skills were actually helpful (tool-call outcome signal)
+  - `[x]` Periodically re-embed and re-rank skills based on usage success rate
+  - `[x]` Skill editing: allow the agent to rewrite a skill's description/body in place
+- `[x]` Memory nudge system
+  - `[x]` Post-session hook: prompt agent to identify facts worth persisting to `MEMORY.md` / `USER.md`
+  - `[x]` Append-only write to `~/.athena/MEMORY.md` and `~/.athena/USER.md`
+  - `[x]` Inject memory files into system prompt at session start
+- `[x]` agentskills.io compatibility
+  - `[x]` Import skills from the Skills Hub (fetch + parse agentskills.io JSON format)
+  - `[x]` Export local skills in agentskills.io format
 
 ---
 
@@ -224,12 +224,12 @@ The features below are hermes-agent's core differentiator. They require net-new 
   - `[x]` Spawn Node.js companion script from `athena-gateway`
   - `[x]` Handle pairing code flow; persist session to `~/.athena/whatsapp_session.json`
   - `[x]` Route inbound WhatsApp messages through `AIAgent`; send response back
-  - `[ ]` Voice memo: pipe audio attachment through `AudioProcessor::transcribe`, treat result as text message
+  - `[x]` Voice memo: pipe audio attachment through `AudioProcessor::transcribe`, treat result as text message
 - `[x]` Slack live gateway
   - `[x]` Implement Events API webhook handler (uses existing `athena-gateway` webhook infra)
   - `[x]` Handle `app_mention` and DM events
-  - `[ ]` Interactive approval prompts via Slack Block Kit buttons (yes/no tool approval)
-  - `[ ]` Slash command routing (`/athena <prompt>`)
+  - `[x]` Interactive approval prompts via Slack Block Kit buttons (yes/no tool approval)
+  - `[x]` Slash command routing (`/athena <prompt>`)
 - `[x]` Discord gateway
   - `[x]` Add `serenity` or `twilight` crate to `athena-gateway`
   - `[x]` Handle mention + DM events; stream response as message edits
@@ -271,8 +271,8 @@ The features below are hermes-agent's core differentiator. They require net-new 
 
 # Phase 22: Test Coverage for New Phases (New)
 
-- `[ ]` Phase 16 (Learning Loop) — unit tests for skill synthesis prompt, memory nudge, FTS5 search, trajectory export
-- `[ ]` Phase 17 (Context Files) — tests for AGENTS.md discovery (mock filesystem), memory injection
-- `[ ]` Phase 18 (Gateways) — integration tests for WhatsApp bridge lifecycle, Slack event routing
-- `[ ]` Phase 19 (Caching) — assert `cache_control` fields present in serialized Anthropic request; mock cache-hit response
-- `[ ]` Phase 20 (Dashboard) — WebSocket round-trip integration test; React component unit tests
+- `[x]` Phase 16 (Learning Loop) — unit tests for skill synthesis prompt, memory nudge, FTS5 search, trajectory export
+- `[x]` Phase 17 (Context Files) — tests for AGENTS.md discovery (mock filesystem), memory injection
+- `[x]` Phase 18 (Gateways) — integration tests for WhatsApp bridge lifecycle, Slack event routing
+- `[x]` Phase 19 (Caching) — assert `cache_control` fields present in serialized Anthropic request; mock cache-hit response
+- `[x]` Phase 20 (Dashboard) — WebSocket round-trip integration test; React component unit tests

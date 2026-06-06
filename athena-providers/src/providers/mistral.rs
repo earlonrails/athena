@@ -307,6 +307,8 @@ impl LLMProvider for MistralProvider {
             prompt_tokens: u.get("prompt_tokens").and_then(|t| t.as_u64()).unwrap_or(0),
             completion_tokens: u.get("completion_tokens").and_then(|t| t.as_u64()).unwrap_or(0),
             total_tokens: u.get("total_tokens").and_then(|t| t.as_u64()).unwrap_or(0),
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
         });
         
         Ok(ChatCompletionResponse {

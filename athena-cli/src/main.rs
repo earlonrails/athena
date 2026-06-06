@@ -1,6 +1,7 @@
 mod interactive;
 mod commands;
 pub mod context;
+pub mod logger;
 
 use clap::Parser;
 use clap::Subcommand;
@@ -322,6 +323,14 @@ pub(crate) fn create_agent_builder(config: &athena_core::config::AthenaConfig, a
 
     let provider = athena_providers::registry::get_provider(provider_slug)
         .unwrap_or_else(|| athena_providers::registry::get_provider("openai").unwrap());
+
+    if let Ok(db) = athena_state::db::SessionDB::new(None) {
+        let logger = crate::logger::DbSessionLogger {
+            db: std::sync::Arc::new(db),
+            model: args.model.clone().unwrap_or_else(|| "gpt-4o".to_string()),
+        };
+        builder = builder.logger(std::sync::Arc::new(logger));
+    }
 
     (builder, provider)
 }
@@ -743,17 +752,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_end_to_end_mocked_provider_test() {
-        use wiremock::matchers::{method, path, header};
+        use wiremock::matchers::{method, path, header, body_partial_json};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         use athena_tools::ToolRegistry;
 
         // 1. Start a local mock server
         let mock_server = MockServer::start().await;
 
-        // 2. Set up the mock to expect a request with our dummy token
+        // 2. Set up the mock for non-streaming (compression)
         Mock::given(method("POST"))
-            .and(path("/v1/chat/completions")) // The path used by async-openai
+            .and(path("/v1/chat/completions"))
             .and(header("Authorization", "Bearer dummy_mistral_key"))
+            .and(body_partial_json(serde_json::json!({"stream": false})))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "id": "mock_id",
                 "object": "chat.completion",
@@ -763,11 +773,21 @@ mod tests {
                     "index": 0,
                     "message": {
                         "role": "assistant",
-                        "content": "Hello from mock Mistral!"
+                        "content": "Mock summary"
                     },
                     "finish_reason": "stop"
                 }]
             })))
+            .mount(&mock_server)
+            .await;
+
+        // 3. Set up the mock for streaming (main request)
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("Authorization", "Bearer dummy_mistral_key"))
+            .respond_with(ResponseTemplate::new(200)
+                .set_body_bytes(b"data: {\"id\":\"mock_id\",\"object\":\"chat.completion.chunk\",\"created\":12345,\"model\":\"mistral-large-latest\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello from mock Mistral!\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"mock_id\",\"object\":\"chat.completion.chunk\",\"created\":12345,\"model\":\"mistral-large-latest\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n".to_vec())
+                .insert_header("Content-Type", "text/event-stream"))
             .mount(&mock_server)
             .await;
 

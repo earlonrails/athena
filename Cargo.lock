@@ -304,6 +304,7 @@ dependencies = [
  "cliclack",
  "dirs 5.0.1",
  "dotenvy",
+ "futures-util",
  "indicatif 0.17.11",
  "open",
  "openssl",
@@ -314,8 +315,10 @@ dependencies = [
  "serde_yaml",
  "tempfile",
  "tokio",
+ "tokio-tungstenite 0.21.0",
  "tower-http 0.5.2",
  "tracing",
+ "uuid",
  "wiremock",
  "zip",
 ]
@@ -397,10 +400,12 @@ dependencies = [
  "async-trait",
  "athena-agent",
  "athena-core",
+ "athena-multimedia",
  "athena-providers",
  "athena-skills",
  "athena-tools",
  "axum",
+ "base64 0.22.1",
  "dotenvy",
  "reqwest 0.12.28",
  "serde",
@@ -410,6 +415,7 @@ dependencies = [
  "tokio",
  "tokio-cron-scheduler",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -485,16 +491,19 @@ name = "athena-skills"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "athena-core",
  "athena-providers",
  "fastembed",
  "ort-sys",
  "rusqlite",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]
@@ -514,11 +523,13 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "athena-core",
+ "athena-env",
  "athena-state",
  "inventory",
  "reqwest 0.11.27",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "uuid",
@@ -533,9 +544,11 @@ dependencies = [
  "athena-providers",
  "athena-tools",
  "dotenvy",
+ "futures",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite 0.29.0",
  "tracing",
 ]
 
@@ -6058,6 +6071,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-tungstenite"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite 0.29.0",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6303,6 +6328,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "tungstenite"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c01152af293afb9c7c2a57e4b559c5620b421f6d133261c60dd2d0cdb38e6b8"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http 1.4.0",
+ "httparse",
+ "log",
+ "rand 0.9.4",
+ "sha1",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "typemap_rev"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6452,9 +6493,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.23.1"
+version = "1.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
+checksum = "d258b83ceec21034727ecee8c382cfa6c3e133699b0742c64571814fb420c9f7"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",

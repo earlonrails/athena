@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use athena_providers::{ChatCompletionRequest, ChatMessage, LLMProvider, MessageRole};
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::{Skill, SkillManager, SkillStore};
@@ -170,5 +170,105 @@ impl SkillSynthesizer {
         info!("Successfully synthesized and stored new skill: '{}' ({})", skill.name, skill.id);
 
         Ok(Some(skill))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{method, path, body_string_contains};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    use athena_providers::providers::openai::OpenAIProvider;
+
+    #[tokio::test]
+    async fn test_skill_synthesis_prompt() {
+        let mock_server = MockServer::start().await;
+
+        let synthesis_body = serde_json::json!({
+            "id": "chatcmpl-123",
+            "object": "chat.completion",
+            "created": 1677652288,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "```json\n{\n  \"name\": \"Test Skill\",\n  \"description\": \"A description.\",\n  \"body\": \"Step 1.\"\n}\n```"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        let gate_body = serde_json::json!({
+            "id": "chatcmpl-456",
+            "object": "chat.completion",
+            "created": 1677652289,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "yes"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_string_contains("synthesizing a reusable skill"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(synthesis_body))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_string_contains("Review the following skill"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(gate_body))
+            .mount(&mock_server)
+            .await;
+
+        let provider = Arc::new(OpenAIProvider::new(Some("test-key".to_string()), Some(mock_server.uri())));
+
+        let store = Arc::new(SkillStore::new(":memory:").unwrap());
+        let manager = Arc::new(SkillManager::new(":memory:").unwrap());
+
+        let history = vec![
+            ChatMessage {
+                role: MessageRole::User,
+                content: "Do the task".to_string(),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: MessageRole::Assistant,
+                content: "I did it".to_string(),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+        ];
+
+        let result = SkillSynthesizer::synthesize(
+            history,
+            provider,
+            "gpt-4o",
+            store.clone(),
+            manager.clone(),
+            0.9,
+        ).await;
+
+        assert!(result.is_ok(), "Failed to synthesize: {:?}", result.unwrap_err());
+        let opt_skill = result.unwrap();
+        assert!(opt_skill.is_some());
+        let skill = opt_skill.unwrap();
+        
+        assert_eq!(skill.name, "Test Skill");
+        assert_eq!(skill.description, "A description.");
+        assert_eq!(skill.instructions, "Step 1.");
+        
+        let fetched = store.get_skill(&skill.id).unwrap().unwrap();
+        assert_eq!(fetched.name, "Test Skill");
     }
 }

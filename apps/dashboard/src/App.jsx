@@ -9,11 +9,13 @@ import SkillsView from './views/SkillsView.jsx';
 import MCPView from './views/MCPView.jsx';
 import PluginsView from './views/PluginsView.jsx';
 import ToolsView from './views/ToolsView.jsx';
+import KanbanView from './views/KanbanView.jsx';
 
 function Sidebar({ isOpen, toggleSidebar }) {
   const location = useLocation();
   const navLinks = [
     { path: '/', icon: <MessageSquare size={20} />, label: 'Chat' },
+    { path: '/kanban', icon: <Box size={20} />, label: 'Kanban' },
     { path: '/models', icon: <Cpu size={20} />, label: 'Models' },
     { path: '/config', icon: <Settings size={20} />, label: 'Configuration' },
     { path: '/skills', icon: <Puzzle size={20} />, label: 'Skills' },
@@ -78,6 +80,7 @@ export default function App() {
             
             <Routes>
               <Route path="/" element={<ChatView />} />
+              <Route path="/kanban" element={<KanbanView />} />
               <Route path="/models" element={<ModelView />} />
               <Route path="/config" element={<ConfigView />} />
               <Route path="/skills" element={<SkillsView />} />

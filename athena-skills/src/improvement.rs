@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use athena_providers::{ChatCompletionRequest, ChatMessage, LLMProvider, MessageRole};
 use std::sync::Arc;
 use tracing::info;

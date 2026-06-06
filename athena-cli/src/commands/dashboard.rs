@@ -70,6 +70,7 @@ pub async fn run_dashboard() {
         .route("/api/plugins/:name", delete(remove_plugin))
         .route("/api/mcp", get(get_mcp).post(update_mcp))
         .route("/api/chat", get(ws_handler))
+        .route("/api/kanban", get(get_kanban).post(post_kanban))
         .fallback_service(ServeDir::new(&web_dir))
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -211,6 +212,14 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 agent_builder = agent_builder.api_key(&key);
             }
 
+            if let Ok(db) = athena_state::db::SessionDB::new(None) {
+                let logger = crate::logger::DbSessionLogger {
+                    db: std::sync::Arc::new(db),
+                    model: model_name.clone(),
+                };
+                agent_builder = agent_builder.logger(std::sync::Arc::new(logger));
+            }
+
             let mut locked_agent = agent_builder.build();
             let dynamic_provider = athena_providers::registry::get_provider(&provider_slug).unwrap_or(state.provider.clone());
 
@@ -237,6 +246,198 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 }
             }
         }
+    }
+}
+
+async fn get_kanban() -> Json<serde_json::Value> {
+    if let Ok(db) = athena_state::kanban::KanbanDB::new() {
+        let _ = db.init_default_board();
+        if let Ok(cards) = db.get_cards("default") {
+            return Json(serde_json::json!({ "cards": cards }));
+        }
+    }
+    Json(serde_json::json!({ "error": "failed to load kanban" }))
+}
+
+#[derive(serde::Deserialize)]
+struct KanbanAction {
+    action: String,
+    task_id: Option<String>,
+    title: Option<String>,
+    column_id: Option<String>,
+    assignee: Option<String>,
+}
+
+async fn post_kanban(axum::extract::Json(payload): axum::extract::Json<KanbanAction>) -> Json<serde_json::Value> {
+    if let Ok(db) = athena_state::kanban::KanbanDB::new() {
+        let _ = db.init_default_board();
+        match payload.action.as_str() {
+            "create" => {
+                let id = uuid::Uuid::new_v4().to_string();
+                if let Some(title) = &payload.title {
+                    if db.create_card(&id, "default", payload.column_id.as_deref().unwrap_or("col-todo"), title, payload.assignee.as_deref()).is_ok() {
+                        return Json(serde_json::json!({ "status": "success", "id": id }));
+                    }
+                }
+            }
+            "move" => {
+                if let (Some(id), Some(col)) = (&payload.task_id, &payload.column_id) {
+                    if db.move_card(id, col).is_ok() {
+                        return Json(serde_json::json!({ "status": "success" }));
+                    }
+                }
+            }
+            "assign" => {
+                if let (Some(id), Some(assignee)) = (&payload.task_id, &payload.assignee) {
+                    if db.assign_card(id, assignee).is_ok() {
+                        return Json(serde_json::json!({ "status": "success" }));
+                    }
+                }
+            }
+            "delete" => {
+                if let Some(id) = &payload.task_id {
+                    if db.delete_card(id).is_ok() {
+                        return Json(serde_json::json!({ "status": "success" }));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Json(serde_json::json!({ "error": "failed to process action" }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use athena_tools::ToolRegistry;
+    use athena_providers::{LLMProvider, ProviderProfile, ChatCompletionResponse, ChatCompletionStream, StreamChunk, Choice, ChatMessage, MessageRole, ChatCompletionRequest, ProviderError, StreamChoice, StreamDelta};
+    use async_trait::async_trait;
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::connect_async;
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    struct DummyProvider {
+        profile: ProviderProfile,
+    }
+
+    #[async_trait]
+    impl LLMProvider for DummyProvider {
+        fn profile(&self) -> &ProviderProfile {
+            &self.profile
+        }
+        
+        async fn fetch_models(&self, _: Option<&str>, _: f64) -> Result<Vec<String>, ProviderError> {
+            Ok(vec!["dummy".to_string()])
+        }
+        
+        async fn create_chat_completion(&self, _: ChatCompletionRequest) -> Result<ChatCompletionResponse, ProviderError> {
+            Ok(ChatCompletionResponse {
+                id: "1".into(),
+                model: "dummy".into(),
+                choices: vec![
+                    Choice {
+                        index: 0,
+                        message: ChatMessage {
+                            role: MessageRole::Assistant,
+                            content: "Mock response".into(),
+                            name: None,
+                            tool_calls: None,
+                            tool_call_id: None,
+                        },
+                        finish_reason: Some("stop".into()),
+                    }
+                ],
+                usage: None,
+                created: 0,
+            })
+        }
+
+        async fn create_chat_completion_stream(&self, _: ChatCompletionRequest) -> Result<ChatCompletionStream, ProviderError> {
+            let chunks = vec![
+                Ok(StreamChunk {
+                    id: "1".to_string(),
+                    model: "dummy".to_string(),
+                    created: None,
+                    choices: vec![
+                        StreamChoice {
+                            index: 0,
+                            delta: StreamDelta {
+                                role: Some(MessageRole::Assistant),
+                                content: Some("Hello ".to_string()),
+                                tool_calls: None,
+                            },
+                            finish_reason: None,
+                        }
+                    ],
+                    usage: None,
+                }),
+                Ok(StreamChunk {
+                    id: "2".to_string(),
+                    model: "dummy".to_string(),
+                    created: None,
+                    choices: vec![
+                        StreamChoice {
+                            index: 0,
+                            delta: StreamDelta {
+                                role: None,
+                                content: Some("World".to_string()),
+                                tool_calls: None,
+                            },
+                            finish_reason: Some("stop".to_string()),
+                        }
+                    ],
+                    usage: None,
+                }),
+            ];
+            
+            let stream = futures_util::stream::iter(chunks);
+            Ok(ChatCompletionStream {
+                response: Box::new(stream),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_websocket_bridge_roundtrip() {
+        let registry = Arc::new(ToolRegistry::new());
+        let provider = Arc::new(DummyProvider { profile: ProviderProfile::new("dummy") });
+        let state = AppState { registry, provider };
+
+        let app = Router::new()
+            .route("/api/chat", get(ws_handler))
+            .with_state(state);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let ws_url = format!("ws://{}/api/chat", addr);
+        let (mut ws_stream, _) = connect_async(&ws_url).await.expect("Failed to connect");
+
+        // Send a message
+        ws_stream.send(Message::Text("Hello".to_string())).await.unwrap();
+
+        // Receive the response chunks
+        // First chunk from dummy provider
+        let mut responses = Vec::new();
+        while let Some(msg) = ws_stream.next().await {
+            if let Ok(Message::Text(text)) = msg {
+                responses.push(text);
+                if responses.len() >= 2 {
+                    break;
+                }
+            }
+        }
+        
+        assert_eq!(responses.len(), 2);
+        assert!(responses[0].contains("Hello "));
+        assert!(responses[1].contains("World"));
     }
 }
 

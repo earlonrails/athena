@@ -136,7 +136,13 @@ impl AnthropicProvider {
         }
         
         if !system_prompt.is_empty() {
-            body["system"] = serde_json::Value::String(system_prompt.trim().to_string());
+            body["system"] = serde_json::Value::Array(vec![
+                serde_json::json!({
+                    "type": "text",
+                    "text": system_prompt.trim(),
+                    "cache_control": { "type": "ephemeral" }
+                })
+            ]);
         }
 
         // Merge adjacent messages of the same role (Anthropic requires alternating roles)
@@ -194,7 +200,7 @@ impl AnthropicProvider {
         }
 
         if let Some(tools) = &request.tools {
-            let anthropic_tools: Vec<_> = tools.iter().map(|t| {
+            let mut anthropic_tools: Vec<_> = tools.iter().map(|t| {
                 let mut tool_obj = serde_json::json!({
                     "name": t.function.name,
                     "input_schema": t.function.parameters
@@ -204,6 +210,13 @@ impl AnthropicProvider {
                 }
                 tool_obj
             }).collect();
+            
+            if let Some(last) = anthropic_tools.last_mut() {
+                if let Some(obj) = last.as_object_mut() {
+                    obj.insert("cache_control".to_string(), serde_json::json!({ "type": "ephemeral" }));
+                }
+            }
+            
             if !anthropic_tools.is_empty() {
                 body["tools"] = serde_json::Value::Array(anthropic_tools);
             }
@@ -394,6 +407,8 @@ impl LLMProvider for AnthropicProvider {
                 completion_tokens: u.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0),
                 total_tokens: u.get("input_tokens").and_then(|t| t.as_u64()).unwrap_or(0) +
                              u.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0),
+                cache_creation_input_tokens: u.get("cache_creation_input_tokens").and_then(|t| t.as_u64()),
+                cache_read_input_tokens: u.get("cache_read_input_tokens").and_then(|t| t.as_u64()),
             });
         
         Ok(ChatCompletionResponse {
@@ -559,11 +574,35 @@ impl LLMProvider for AnthropicProvider {
                 _ => {} // Ignore other event types
             }
             
+            let mut extracted_usage = None;
+            if let Some(u) = data.get("usage") {
+                // message_delta only provides output_tokens sometimes, but message_start provides input_tokens
+                // Let's grab whatever we can
+                extracted_usage = Some(Usage {
+                    prompt_tokens: u.get("input_tokens").and_then(|t| t.as_u64()).unwrap_or(0),
+                    completion_tokens: u.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0),
+                    total_tokens: u.get("input_tokens").and_then(|t| t.as_u64()).unwrap_or(0) +
+                                 u.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0),
+                    cache_creation_input_tokens: u.get("cache_creation_input_tokens").and_then(|t| t.as_u64()),
+                    cache_read_input_tokens: u.get("cache_read_input_tokens").and_then(|t| t.as_u64()),
+                });
+            } else if let Some(u) = data.get("message").and_then(|m| m.get("usage")) {
+                extracted_usage = Some(Usage {
+                    prompt_tokens: u.get("input_tokens").and_then(|t| t.as_u64()).unwrap_or(0),
+                    completion_tokens: u.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0),
+                    total_tokens: u.get("input_tokens").and_then(|t| t.as_u64()).unwrap_or(0) +
+                                 u.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0),
+                    cache_creation_input_tokens: u.get("cache_creation_input_tokens").and_then(|t| t.as_u64()),
+                    cache_read_input_tokens: u.get("cache_read_input_tokens").and_then(|t| t.as_u64()),
+                });
+            }
+
             Ok(StreamChunk {
-                id: data["message"]["id"].as_str().unwrap_or_default().to_string(),
+                id: data.get("message").and_then(|m| m.get("id")).and_then(|i| i.as_str()).unwrap_or_default().to_string(),
                 model: String::new(),
                 created: None,
                 choices,
+                usage: extracted_usage,
             })
         });
 
@@ -655,7 +694,8 @@ mod tests {
         
         assert_eq!(body["model"], "claude-3-opus-20240229");
         assert_eq!(body["max_tokens"], 1024);
-        assert_eq!(body["system"], "sys_prompt");
+        assert_eq!(body["system"][0]["text"], "sys_prompt");
+        assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
         assert_eq!(body["temperature"], 0.5);
         assert_eq!(body["top_p"], 0.5);
         assert!(body["stop_sequences"].is_array());
@@ -746,6 +786,65 @@ mod tests {
         assert_eq!(response.choices.len(), 1);
         assert_eq!(response.choices[0].message.content, "Hello Anthropic!");
         assert_eq!(response.usage.as_ref().unwrap().total_tokens, 30);
+    }
+
+    #[tokio::test]
+    async fn test_anthropic_cache_hit_response() {
+        let mock_server = MockServer::start().await;
+        
+        let response_body = serde_json::json!({
+            "id": "msg_cache",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-3-opus-20240229",
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "cache_read_input_tokens": 100,
+                "cache_creation_input_tokens": 0
+            },
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Cache hit response"
+                }
+            ]
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
+            .mount(&mock_server)
+            .await;
+
+        let mut profile = anthropic_profile();
+        profile.base_url = mock_server.uri();
+        let provider = AnthropicProvider::new_with_profile(profile);
+        
+        let request = ChatCompletionRequest {
+            model: "claude-3-opus-20240229".to_string(),
+            messages: vec![ChatMessage {
+                role: MessageRole::User,
+                content: "Hi".to_string(),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            temperature: None,
+            max_tokens: Some(1024),
+            top_p: None,
+            stop: None,
+            stream: false,
+            tools: None,
+            tool_choice: None,
+            extra_body: HashMap::new(), api_key_override: None, base_url_override: None,
+        };
+
+        let response = provider.create_chat_completion(request).await.unwrap();
+        assert_eq!(response.usage.as_ref().unwrap().cache_read_input_tokens, Some(100));
+        assert_eq!(response.usage.as_ref().unwrap().cache_creation_input_tokens, Some(0));
     }
 
     #[tokio::test]
