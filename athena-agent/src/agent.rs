@@ -333,9 +333,11 @@ impl AIAgent {
 
                 let p_clone = provider.clone();
                 let m_clone = self.config.model.clone();
+                let key_clone = self.config.api_key.clone();
+                let url_clone = self.config.base_url.clone();
                 
                 tokio::spawn(async move {
-                    if let Err(e) = athena_skills::MemoryNudge::run(&history, p_clone, &m_clone).await {
+                    if let Err(e) = athena_skills::MemoryNudge::run(&history, p_clone, &m_clone, key_clone, url_clone).await {
                         tracing::error!("Error during memory nudge: {}", e);
                     }
                 });
@@ -440,6 +442,8 @@ impl AIAgent {
                     }
                 }
                 
+                let key_clone = self.config.api_key.clone();
+                let url_clone = self.config.base_url.clone();
                 tokio::spawn(async move {
                     if let Err(e) = athena_skills::SkillSynthesizer::synthesize(
                         synthesis_history,
@@ -448,6 +452,8 @@ impl AIAgent {
                         s.clone(),
                         m.clone(),
                         0.92,
+                        key_clone.clone(),
+                        url_clone.clone(),
                     ).await {
                         tracing::error!("Error during skill synthesis: {}", e);
                     }
@@ -457,6 +463,8 @@ impl AIAgent {
                         m.clone(),
                         p.clone(),
                         &mod_name,
+                        key_clone,
+                        url_clone,
                     ).await {
                         tracing::error!("Error during skill improvement: {}", e);
                     }
@@ -474,9 +482,11 @@ impl AIAgent {
 
         let p_clone = provider.clone();
         let m_clone = self.config.model.clone();
+        let key_clone = self.config.api_key.clone();
+        let url_clone = self.config.base_url.clone();
         
         tokio::spawn(async move {
-            if let Err(e) = athena_skills::MemoryNudge::run(&history, p_clone, &m_clone).await {
+            if let Err(e) = athena_skills::MemoryNudge::run(&history, p_clone, &m_clone, key_clone, url_clone).await {
                 tracing::error!("Error during memory nudge: {}", e);
             }
         });

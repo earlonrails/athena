@@ -352,6 +352,39 @@ impl LLMProvider for OpenAIProvider {
             api_request.stop(stop);
         }
         
+        // Handle tools - convert to async-openai format
+        if let Some(tools) = request.tools {
+            let api_tools: Vec<_> = tools.into_iter().map(|t| {
+                async_openai::types::ChatCompletionTool {
+                    r#type: async_openai::types::ChatCompletionToolType::Function,
+                    function: async_openai::types::FunctionObject {
+                        name: t.function.name,
+                        description: t.function.description,
+                        parameters: Some(t.function.parameters),
+                    },
+                }
+            }).collect();
+            api_request.tools(api_tools);
+        }
+        
+        // Handle tool_choice
+        if let Some(tool_choice) = request.tool_choice {
+            let api_tool_choice = match tool_choice {
+                ToolChoice::None => async_openai::types::ChatCompletionToolChoiceOption::None,
+                ToolChoice::Auto => async_openai::types::ChatCompletionToolChoiceOption::Auto,
+                ToolChoice::Required => async_openai::types::ChatCompletionToolChoiceOption::Auto,
+                ToolChoice::Specific(name) => async_openai::types::ChatCompletionToolChoiceOption::Named(
+                    async_openai::types::ChatCompletionNamedToolChoice {
+                        r#type: async_openai::types::ChatCompletionToolType::Function,
+                        function: async_openai::types::FunctionName {
+                            name,
+                        }
+                    }
+                ),
+            };
+            api_request.tool_choice(api_tool_choice);
+        }
+        
         let api_request = api_request.build()
             .map_err(|e| ProviderError::ConfigurationError(e.to_string()))?;
         

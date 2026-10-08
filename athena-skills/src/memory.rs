@@ -9,7 +9,13 @@ use athena_core::paths::get_athena_home;
 pub struct MemoryNudge;
 
 impl MemoryNudge {
-    pub async fn run(history: &[ChatMessage], provider: Arc<dyn LLMProvider>, model_name: &str) -> Result<()> {
+    pub async fn run(
+        history: &[ChatMessage],
+        provider: Arc<dyn LLMProvider>,
+        model_name: &str,
+        api_key_override: Option<String>,
+        base_url_override: Option<String>,
+    ) -> Result<()> {
         let max_turns = 10;
         let recent_history: Vec<_> = history.iter().rev().take(max_turns).rev().collect();
         
@@ -53,8 +59,8 @@ impl MemoryNudge {
             tools: None,
             tool_choice: None,
             extra_body: Default::default(),
-            api_key_override: None,
-            base_url_override: None,
+            api_key_override,
+            base_url_override,
         };
 
         info!("Calling LLM for memory nudge...");
@@ -132,7 +138,7 @@ mod tests {
             },
         ];
 
-        let result = MemoryNudge::run(&history, provider, "gpt-4o").await;
+        let result = MemoryNudge::run(&history, provider, "gpt-4o", None, None).await;
         assert!(result.is_ok(), "Memory Nudge failed");
 
         // Verify MEMORY.md was created and contains the facts

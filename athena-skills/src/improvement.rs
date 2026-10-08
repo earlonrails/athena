@@ -13,6 +13,8 @@ impl SkillImprover {
         manager: Arc<SkillManager>,
         provider: Arc<dyn LLMProvider>,
         model_name: &str,
+        api_key_override: Option<String>,
+        base_url_override: Option<String>,
     ) -> Result<usize> {
         let skills = store.get_all_skills()?;
         let mut improved_count = 0;
@@ -62,8 +64,8 @@ impl SkillImprover {
                         tools: None,
                         tool_choice: None,
                         extra_body: Default::default(),
-                        api_key_override: None,
-                        base_url_override: None,
+                        api_key_override: api_key_override.clone(),
+                        base_url_override: base_url_override.clone(),
                     };
 
                     match provider.create_chat_completion(req).await {
@@ -116,3 +118,5 @@ impl SkillImprover {
         Ok(improved_count)
     }
 }
+
+// Rust guideline compliant 2026-02-21

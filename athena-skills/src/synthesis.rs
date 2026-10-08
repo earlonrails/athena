@@ -16,6 +16,8 @@ impl SkillSynthesizer {
         store: Arc<SkillStore>,
         manager: Arc<SkillManager>,
         dedup_threshold: f32,
+        api_key_override: Option<String>,
+        base_url_override: Option<String>,
     ) -> Result<Option<Skill>> {
         // 1. Build the synthesis prompt
         let mut prompt_content = String::from(
@@ -71,8 +73,8 @@ impl SkillSynthesizer {
             tools: None,
             tool_choice: None,
             extra_body: Default::default(),
-            api_key_override: None,
-            base_url_override: None,
+            api_key_override: api_key_override.clone(),
+            base_url_override: base_url_override.clone(),
         };
 
         // 2. Call active provider
@@ -133,8 +135,8 @@ impl SkillSynthesizer {
             tools: None,
             tool_choice: None,
             extra_body: Default::default(),
-            api_key_override: None,
-            base_url_override: None,
+            api_key_override,
+            base_url_override,
         };
 
         let gate_response = provider.create_chat_completion(gate_req).await?;
@@ -257,6 +259,8 @@ mod tests {
             store.clone(),
             manager.clone(),
             0.9,
+            None,
+            None,
         ).await;
 
         assert!(result.is_ok(), "Failed to synthesize: {:?}", result.unwrap_err());
