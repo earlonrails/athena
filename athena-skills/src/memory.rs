@@ -42,8 +42,19 @@ impl MemoryNudge {
             }
         }
 
+        let profile = provider.profile();
+        let effective_model = if profile.fallback_models.iter().any(|m| m == model_name) || (!profile.name.is_empty() && model_name.contains(&profile.name)) {
+            model_name.to_string()
+        } else if !profile.default_aux_model.is_empty() {
+            profile.default_aux_model.clone()
+        } else if let Some(first) = profile.fallback_models.first() {
+            first.clone()
+        } else {
+            model_name.to_string()
+        };
+
         let req = ChatCompletionRequest {
-            model: model_name.to_string(),
+            model: effective_model,
             messages: vec![ChatMessage {
                 role: MessageRole::User,
                 content: prompt_content,

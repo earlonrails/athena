@@ -336,15 +336,16 @@ impl AIAgent {
                 let key_clone = self.config.api_key.clone();
                 let url_clone = self.config.base_url.clone();
                 
-                tokio::spawn(async move {
+                let _ = tx.send(crate::events::AgentEvent::FinalResponse(final_content.clone()));
+                self.log_session_to_db(&messages, system_message);
+
+                let nudge_handle = tokio::spawn(async move {
                     if let Err(e) = athena_skills::MemoryNudge::run(&history, p_clone, &m_clone, key_clone, url_clone).await {
                         tracing::error!("Error during memory nudge: {}", e);
                     }
                 });
+                let _ = tokio::time::timeout(tokio::time::Duration::from_secs(10), nudge_handle).await;
 
-                self.log_session_to_db(&messages, system_message);
-                
-                let _ = tx.send(crate::events::AgentEvent::FinalResponse(final_content.clone()));
                 return Ok(final_content);
             }
 
@@ -444,7 +445,7 @@ impl AIAgent {
                 
                 let key_clone = self.config.api_key.clone();
                 let url_clone = self.config.base_url.clone();
-                tokio::spawn(async move {
+                let synthesis_handle = tokio::spawn(async move {
                     if let Err(e) = athena_skills::SkillSynthesizer::synthesize(
                         synthesis_history,
                         p.clone(),
@@ -469,6 +470,7 @@ impl AIAgent {
                         tracing::error!("Error during skill improvement: {}", e);
                     }
                 });
+                let _ = tokio::time::timeout(tokio::time::Duration::from_secs(10), synthesis_handle).await;
             }
         }
 
@@ -485,13 +487,15 @@ impl AIAgent {
         let key_clone = self.config.api_key.clone();
         let url_clone = self.config.base_url.clone();
         
-        tokio::spawn(async move {
+        self.log_session_to_db(&messages, system_message);
+
+        let nudge_handle = tokio::spawn(async move {
             if let Err(e) = athena_skills::MemoryNudge::run(&history, p_clone, &m_clone, key_clone, url_clone).await {
                 tracing::error!("Error during memory nudge: {}", e);
             }
         });
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(10), nudge_handle).await;
 
-        self.log_session_to_db(&messages, system_message);
         Err("Max iterations reached".to_string())
     }
 

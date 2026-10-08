@@ -272,15 +272,38 @@ pub enum TrajectoryCommands {
 
 pub(crate) fn create_agent_builder(config: &athena_core::config::AthenaConfig, args: &Args) -> (athena_agent::AIAgentBuilder, std::sync::Arc<dyn athena_providers::LLMProvider + Send + Sync>) {
     let mut builder = AIAgent::builder();
-    // Set model if provided globally
+
+    // Initialize provider registry
+    athena_providers::registry::init_builtin_providers();
+    let provider_slug = if config.model.provider.is_empty() { "openai" } else { &config.model.provider };
+    let profile_opt = athena_providers::registry::get_provider_profile(provider_slug);
+
+    // Set model if provided globally, or from config (if compatible), or fallback to provider default
     if let Some(model) = &args.model {
         builder = builder.model(model);
-    } else {
-        if !config.model.default.is_empty() {
+    } else if !config.model.default.is_empty() {
+        let is_valid_for_provider = profile_opt.as_ref().map_or(true, |p| {
+            p.name == "openai" || p.fallback_models.iter().any(|m| m == &config.model.default) || config.model.default.contains(&p.name)
+        });
+        if is_valid_for_provider {
             builder = builder.model(&config.model.default);
+        } else if let Some(ref p) = profile_opt {
+            if let Some(fallback) = p.fallback_models.first() {
+                builder = builder.model(fallback);
+            } else {
+                builder = builder.model(&config.model.default);
+            }
+        } else {
+            builder = builder.model(&config.model.default);
+        }
+    } else if let Some(ref p) = profile_opt {
+        if let Some(fallback) = p.fallback_models.first() {
+            builder = builder.model(fallback);
         } else {
             builder = builder.model("gpt-4o");
         }
+    } else {
+        builder = builder.model("gpt-4o");
     }
 
     // Set max iterations if provided globally
@@ -289,16 +312,12 @@ pub(crate) fn create_agent_builder(config: &athena_core::config::AthenaConfig, a
     } else {
         builder = builder.max_iterations(20);
     }
-
-    // Initialize provider registry
-    athena_providers::registry::init_builtin_providers();
-    let provider_slug = if config.model.provider.is_empty() { "openai" } else { &config.model.provider };
     
     // Resolve API Key and Base URL using the provider registry
-    let mut resolved_api_key = args.api_key.clone().or_else(|| std::env::var("OPENAI_API_KEY").ok());
+    let mut resolved_api_key = args.api_key.clone();
     let mut resolved_base_url = args.base_url.clone();
     
-    if let Some(profile) = athena_providers::registry::get_provider_profile(provider_slug) {
+    if let Some(profile) = profile_opt {
         if resolved_base_url.is_none() {
             resolved_base_url = Some(profile.base_url.clone());
         }
