@@ -46,14 +46,11 @@ pub fn run_computer_use() {
         }
         2 => {
             println!("\nRunning Pre-Flight Graphics Check...");
-            if os == "linux" {
-                let display = std::env::var("DISPLAY").unwrap_or_else(|_| "none".to_string());
-                println!("  • X11 Display Status: {}", display);
-                if display == "none" {
-                    println!("  ⚠️ Warning: No active X11 display. Frame buffer capture might require a headless Xvfb or VNC setup.");
-                } else {
-                    println!("  ✓ Active X11 display detected.");
-                }
+            let (compatible, warning) = check_computer_use_environment();
+            if compatible {
+                println!("  ✓ Active X11 display detected.");
+            } else if let Some(w) = warning {
+                println!("  ⚠️ Warning: {}", w);
             } else {
                 println!("  • Platform diagnostics not yet implemented for non-Linux OS.");
             }

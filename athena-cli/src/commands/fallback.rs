@@ -5,7 +5,7 @@ use anyhow::Result;
 pub fn run_fallback() -> Result<()> {
     let mut config = load_config();
     intro("Fallback Providers Configuration")?;
-    note("Info", format!("Fallback providers are queried sequentially when the primary provider fails.\nCurrent fallback list: {:?}", config.fallback_providers))?;
+    note("Info", format!("Fallback providers are queried sequentially when the primary provider fails.\nCurrent fallback list: {}", format_fallback_list(&config.fallback_providers)))?;
 
     let choice: usize = select("Options")
         .item(1, "Add provider to fallbacks", "")
