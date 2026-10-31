@@ -20,22 +20,14 @@ pub fn run_hooks() -> Result<()> {
 
     match choice {
         1 => {
-            let mut count = 0;
-            let mut msg = String::from("Installed Shell Hooks:\n");
-            if let Ok(entries) = fs::read_dir(&hooks_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_file() {
-                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                            msg.push_str(&format!("  • {} ({})\n", name, path.display()));
-                            count += 1;
-                        }
-                    }
-                }
-            }
-            if count == 0 {
+            let hooks = list_hooks(&hooks_dir);
+            if hooks.is_empty() {
                 outro("No shell hooks installed.")?;
             } else {
+                let mut msg = String::from("Installed Shell Hooks:\n");
+                for name in hooks {
+                    msg.push_str(&format!("  • {}\n", name));
+                }
                 outro(msg.trim_end())?;
             }
         }
@@ -90,6 +82,41 @@ pub fn run_hooks() -> Result<()> {
     }
     
     Ok(())
+}
+
+pub fn list_hooks(hooks_dir: &std::path::Path) -> Vec<String> {
+    let mut hooks = Vec::new();
+    if let Ok(entries) = fs::read_dir(hooks_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    hooks.push(name.to_string());
+                }
+            }
+        }
+    }
+    hooks.sort();
+    hooks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_hooks() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let hooks_dir = temp_dir.path().join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+
+        fs::write(hooks_dir.join("pre-step.sh"), "#!/bin/sh\necho pre").unwrap();
+        fs::write(hooks_dir.join("post-step.sh"), "#!/bin/sh\necho post").unwrap();
+
+        let hooks = list_hooks(&hooks_dir);
+        assert_eq!(hooks.len(), 2);
+        assert_eq!(hooks, vec!["post-step.sh".to_string(), "pre-step.sh".to_string()]);
+    }
 }
 
 // Rust guideline compliant 2026-02-21

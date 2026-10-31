@@ -95,7 +95,7 @@ pub struct SessionDB {
     conn: Mutex<Connection>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Session {
     pub id: String,
     pub title: Option<String>,
@@ -104,7 +104,7 @@ pub struct Session {
     pub started_at: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MessageRow {
     pub id: i64,
     pub session_id: String,
@@ -114,7 +114,7 @@ pub struct MessageRow {
     pub timestamp: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionSummary {
     pub session_id: String,
     pub title: Option<String>,
@@ -217,6 +217,25 @@ impl SessionDB {
         Ok((session, messages))
     }
 
+    pub fn list_recent_sessions(&self, limit: usize) -> Result<Vec<Session>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, title, model, system_prompt, started_at FROM sessions ORDER BY started_at DESC LIMIT ?1")?;
+        let rows = stmt.query_map([limit as i64], |row| {
+            Ok(Session {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                model: row.get(2)?,
+                system_prompt: row.get(3)?,
+                started_at: row.get(4)?,
+            })
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
     pub fn search_sessions(&self, query: &str) -> Result<Vec<SessionSummary>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -316,6 +335,28 @@ mod tests {
         // Search for something not there
         let results_empty = db.search_sessions("python").unwrap();
         assert_eq!(results_empty.len(), 0);
+    }
+
+    #[test]
+    fn test_list_recent_sessions_and_trajectory() {
+        let db = SessionDB::new(Some(PathBuf::from(":memory:"))).unwrap();
+        let session = Session {
+            id: "sess-2".to_string(),
+            title: Some("Recent Session".to_string()),
+            model: Some("gemini-2.5-flash".to_string()),
+            system_prompt: Some("You are helpful".to_string()),
+            started_at: 2000.0,
+        };
+        db.insert_session(&session).unwrap();
+
+        let list = db.list_recent_sessions(10).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "sess-2");
+        assert_eq!(list[0].title.as_deref(), Some("Recent Session"));
+
+        let (retrieved_sess, msgs) = db.get_session_trajectory("sess-2").unwrap();
+        assert_eq!(retrieved_sess.id, "sess-2");
+        assert_eq!(msgs.len(), 0);
     }
 }
 

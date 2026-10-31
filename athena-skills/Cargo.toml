@@ -20,3 +20,4 @@ athena-core = { version = "0.1.0", path = "../athena-core" }
 [dev-dependencies]
 wiremock = "0.6"
 tempfile = "3.10"
+async-trait = "0.1"

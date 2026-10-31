@@ -22,18 +22,7 @@ pub fn run_skills() -> Result<()> {
     match choice {
         1 => {
             let skills = store.get_all_skills()?;
-            if skills.is_empty() {
-                outro("No active skills found.")?;
-            } else {
-                let mut msg = String::from("Installed Skills:\n");
-                for skill in skills {
-                    msg.push_str(&format!(
-                        "  • {} (Usage: {}, Success: {})\n      {}\n",
-                        skill.name, skill.usage_count, skill.success_count, skill.description
-                    ));
-                }
-                outro(msg.trim_end())?;
-            }
+            outro(format_skills_list(&skills))?;
         }
         2 => {
             let path_str: String = input("Enter path to agentskills.json")
@@ -66,6 +55,48 @@ pub fn run_skills() -> Result<()> {
     }
     
     Ok(())
+}
+
+pub fn format_skills_list(skills: &[athena_skills::Skill]) -> String {
+    if skills.is_empty() {
+        return "No active skills found.".to_string();
+    }
+    let mut msg = String::from("Installed Skills:\n");
+    for skill in skills {
+        msg.push_str(&format!(
+            "  • {} (Usage: {}, Success: {})\n      {}\n",
+            skill.name, skill.usage_count, skill.success_count, skill.description
+        ));
+    }
+    msg.trim_end().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use athena_skills::Skill;
+
+    #[test]
+    fn test_format_skills_list() {
+        assert_eq!(format_skills_list(&[]), "No active skills found.");
+
+        let skills = vec![Skill {
+            id: "sk-1".into(),
+            name: "Rust Dev".into(),
+            description: "Expert Rust programming guidelines".into(),
+            instructions: "Write clean async code".into(),
+            usage_count: 5,
+            success_count: 5,
+            created_at: 0,
+            updated_at: 0,
+        }];
+
+        let formatted = format_skills_list(&skills);
+        assert!(formatted.contains("Installed Skills:"));
+        assert!(formatted.contains("Rust Dev"));
+        assert!(formatted.contains("(Usage: 5, Success: 5)"));
+        assert!(formatted.contains("Expert Rust programming guidelines"));
+    }
 }
 
 // Rust guideline compliant 2026-02-21

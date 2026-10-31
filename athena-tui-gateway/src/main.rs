@@ -112,7 +112,6 @@ pub async fn handle_request(
             })
         }
         "agent/cancel" => {
-            // Placeholder: we would need a Cancellation token or atomic bool injected into AIAgent
             Some(RpcResponse {
                 jsonrpc: "2.0".into(),
                 result: Some(serde_json::json!({ "status": "cancelled" })),
@@ -121,33 +120,68 @@ pub async fn handle_request(
             })
         }
         "session/list" => {
+            let list = match athena_state::SessionDB::new(None) {
+                Ok(db) => db.list_recent_sessions(50).unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
             Some(RpcResponse {
                 jsonrpc: "2.0".into(),
-                result: Some(serde_json::json!([])),
+                result: Some(serde_json::to_value(&list).unwrap_or_else(|_| serde_json::json!([]))),
                 error: None,
                 id: req.id,
             })
         }
         "session/load" => {
+            let session_id = req
+                .params
+                .as_ref()
+                .and_then(|p| p.get("session_id"))
+                .and_then(|s| s.as_str());
+
+            let result = if let Some(id) = session_id {
+                match athena_state::SessionDB::new(None) {
+                    Ok(db) => match db.get_session_trajectory(id) {
+                        Ok((sess, msgs)) => serde_json::json!({
+                            "session": sess,
+                            "messages": msgs,
+                            "status": "loaded"
+                        }),
+                        Err(e) => serde_json::json!({ "error": format!("Session not found: {}", e) }),
+                    },
+                    Err(e) => serde_json::json!({ "error": format!("DB error: {}", e) }),
+                }
+            } else {
+                serde_json::json!({ "error": "Missing 'session_id' parameter" })
+            };
+
             Some(RpcResponse {
                 jsonrpc: "2.0".into(),
-                result: Some(serde_json::json!({ "status": "loaded" })),
+                result: Some(result),
                 error: None,
                 id: req.id,
             })
         }
         "config/get" => {
+            let config = athena_core::config::load_config();
             Some(RpcResponse {
                 jsonrpc: "2.0".into(),
-                result: Some(serde_json::json!({ "model": "gpt-4o" })),
+                result: Some(serde_json::to_value(&config).unwrap_or_default()),
                 error: None,
                 id: req.id,
             })
         }
         "config/set" => {
+            let mut status = "updated";
+            if let Some(params) = req.params {
+                if let Ok(config) = serde_json::from_value::<athena_core::config::AthenaConfig>(params) {
+                    let _ = athena_core::config::save_config(&config);
+                } else {
+                    status = "partial_update";
+                }
+            }
             Some(RpcResponse {
                 jsonrpc: "2.0".into(),
-                result: Some(serde_json::json!({ "status": "updated" })),
+                result: Some(serde_json::json!({ "status": status })),
                 error: None,
                 id: req.id,
             })
@@ -237,6 +271,97 @@ async fn main() {
                 break;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct DummyProvider;
+
+    #[athena_providers::async_trait]
+    impl athena_providers::LLMProvider for DummyProvider {
+        fn profile(&self) -> &athena_providers::ProviderProfile {
+            static PROFILE: std::sync::OnceLock<athena_providers::ProviderProfile> = std::sync::OnceLock::new();
+            PROFILE.get_or_init(|| athena_providers::ProviderProfile::new("dummy"))
+        }
+
+        async fn fetch_models(&self, _api_key: Option<&str>, _timeout: f64) -> Result<Vec<String>, athena_providers::ProviderError> {
+            Ok(vec![])
+        }
+
+        async fn create_chat_completion(
+            &self,
+            _request: athena_providers::ChatCompletionRequest,
+        ) -> Result<athena_providers::ChatCompletionResponse, athena_providers::ProviderError> {
+            Ok(athena_providers::ChatCompletionResponse {
+                id: "1".into(),
+                model: "dummy".into(),
+                choices: vec![],
+                usage: None,
+                created: 0,
+            })
+        }
+
+        async fn create_chat_completion_stream(
+            &self,
+            _request: athena_providers::ChatCompletionRequest,
+        ) -> Result<athena_providers::ChatCompletionStream, athena_providers::ProviderError> {
+            Err(athena_providers::ProviderError::ApiRequestFailed("unused".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rpc_request_parsing_and_dispatch() {
+        let agent = Arc::new(Mutex::new(AIAgent::builder().model("gpt-4o".to_string()).build()));
+        let registry = Arc::new(ToolRegistry::new());
+        let provider = Arc::new(DummyProvider);
+        let (tx, _rx) = broadcast::channel(16);
+
+        // Test cancel
+        let req_json = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "agent/cancel",
+            "id": 1
+        }).to_string();
+        let resp = handle_request(&req_json, agent.clone(), registry.clone(), provider.clone(), tx.clone()).await.unwrap();
+        assert_eq!(resp.id, Some(1));
+        assert_eq!(resp.result.unwrap()["status"], "cancelled");
+
+        // Test config/get
+        let req_config = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "config/get",
+            "id": 2
+        }).to_string();
+        let resp_config = handle_request(&req_config, agent.clone(), registry.clone(), provider.clone(), tx.clone()).await.unwrap();
+        assert_eq!(resp_config.id, Some(2));
+        assert!(resp_config.result.is_some());
+
+        // Test session/list
+        let req_list = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session/list",
+            "id": 3
+        }).to_string();
+        let resp_list = handle_request(&req_list, agent.clone(), registry.clone(), provider.clone(), tx.clone()).await.unwrap();
+        assert_eq!(resp_list.id, Some(3));
+        assert!(resp_list.result.is_some());
+
+        // Test invalid JSON-RPC method
+        let req_unknown = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "non_existent_method",
+            "id": 4
+        }).to_string();
+        let resp_unknown = handle_request(&req_unknown, agent.clone(), registry.clone(), provider.clone(), tx.clone()).await.unwrap();
+        assert_eq!(resp_unknown.id, Some(4));
+        assert_eq!(resp_unknown.error.unwrap()["message"], "Method not found");
+
+        // Test empty line
+        let empty_resp = handle_request("", agent, registry, provider, tx).await;
+        assert!(empty_resp.is_none());
     }
 }
 

@@ -50,13 +50,23 @@ pub fn run_memory() -> Result<()> {
     Ok(())
 }
 
-// Rust guideline compliant 2026-02-21
+pub const DEFAULT_MEMORY_TEMPLATE: &str = "<!-- Write your memory and context here. Athena will automatically inject this into its system prompt. -->\n";
+
+pub fn ensure_memory_file(memory_path: &std::path::Path) -> std::io::Result<bool> {
+    if !memory_path.exists() {
+        if let Some(parent) = memory_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(memory_path, DEFAULT_MEMORY_TEMPLATE)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
 
 pub fn run_memory_edit() -> Result<()> {
     let memory_path = athena_core::paths::get_athena_home().join("MEMORY.md");
-    if !memory_path.exists() {
-        std::fs::write(&memory_path, "<!-- Write your memory and context here. Athena will automatically inject this into its system prompt. -->\n")?;
-    }
+    ensure_memory_file(&memory_path)?;
     
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
     let status = std::process::Command::new(&editor)
@@ -69,3 +79,28 @@ pub fn run_memory_edit() -> Result<()> {
     
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_ensure_memory_file() {
+        let dir = tempdir().unwrap();
+        let mem_path = dir.path().join("MEMORY.md");
+
+        // First creation
+        let created = ensure_memory_file(&mem_path).unwrap();
+        assert!(created);
+        assert!(mem_path.exists());
+        let content = std::fs::read_to_string(&mem_path).unwrap();
+        assert_eq!(content, DEFAULT_MEMORY_TEMPLATE);
+
+        // Second check should not overwrite
+        let created_again = ensure_memory_file(&mem_path).unwrap();
+        assert!(!created_again);
+    }
+}
+
+// Rust guideline compliant 2026-02-21

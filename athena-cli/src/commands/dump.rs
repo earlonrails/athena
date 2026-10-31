@@ -2,6 +2,10 @@ use athena_core::paths::get_athena_home;
 use athena_core::config::{load_config, get_env_value};
 
 pub fn run_dump() {
+    print!("{}", generate_dump());
+}
+
+pub fn generate_dump() -> String {
     let version = env!("CARGO_PKG_VERSION");
     let home = get_athena_home();
     let config = load_config();
@@ -17,24 +21,41 @@ pub fn run_dump() {
         ("XAI_API_KEY", "xAI"),
     ];
 
-    println!("### Athena Agent Support Dump");
-    println!("- **Version**: `v{}`", version);
-    println!("- **OS Platform**: `{}`", std::env::consts::OS);
-    println!("- **Architecture**: `{}`", std::env::consts::ARCH);
-    println!("- **Home Directory**: `{}`", home.display());
-    println!("- **Default Model**: `{}`", config.model.default);
+    let mut out = String::new();
+    out.push_str("### Athena Agent Support Dump\n");
+    out.push_str(&format!("- **Version**: `v{}`\n", version));
+    out.push_str(&format!("- **OS Platform**: `{}`\n", std::env::consts::OS));
+    out.push_str(&format!("- **Architecture**: `{}`\n", std::env::consts::ARCH));
+    out.push_str(&format!("- **Home Directory**: `{}`\n", home.display()));
+    out.push_str(&format!("- **Default Model**: `{}`\n", config.model.default));
 
-    println!("\n#### Active Credentials:");
+    out.push_str("\n#### Active Credentials:\n");
     for (env_var, label) in providers {
         let configured = get_env_value(env_var).is_some();
-        println!("- **{}**: `{}`", label, if configured { "Configured" } else { "Not Configured" });
+        out.push_str(&format!("- **{}**: `{}`\n", label, if configured { "Configured" } else { "Not Configured" }));
     }
 
-    println!("\n#### Paths & Files Presence:");
-    println!("- **Config File**: `{}`", if home.join("config.json").exists() { "Present" } else { "Missing" });
-    println!("- **Database**: `{}`", if home.join("session.db").exists() { "Present" } else { "Missing" });
-    println!("- **Skills Folder**: `{}`", if home.join("skills").exists() { "Present" } else { "Missing" });
-    println!("- **Plugins Folder**: `{}`", if home.join("plugins").exists() { "Present" } else { "Missing" });
+    out.push_str("\n#### Paths & Files Presence:\n");
+    out.push_str(&format!("- **Config File**: `{}`\n", if home.join("config.yaml").exists() || home.join("config.json").exists() { "Present" } else { "Missing" }));
+    out.push_str(&format!("- **Database**: `{}`\n", if home.join("state.db").exists() || home.join("session.db").exists() { "Present" } else { "Missing" }));
+    out.push_str(&format!("- **Skills Folder**: `{}`\n", if home.join("skills").exists() { "Present" } else { "Missing" }));
+    out.push_str(&format!("- **Plugins Folder**: `{}`\n", if home.join("plugins").exists() { "Present" } else { "Missing" }));
+
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_dump() {
+        let dump = generate_dump();
+        assert!(dump.contains("### Athena Agent Support Dump"));
+        assert!(dump.contains("Version"));
+        assert!(dump.contains("Active Credentials"));
+        assert!(dump.contains("Paths & Files Presence"));
+    }
 }
 
 // Rust guideline compliant 2026-02-21

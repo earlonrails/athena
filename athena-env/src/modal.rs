@@ -58,12 +58,39 @@ impl Environment for ModalEnv {
         })
     }
     
-    async fn write_file(&self, _path: &str, _content: &[u8]) -> Result<(), EnvError> {
-        Err(EnvError::ExecutionFailed("Not implemented for Modal".to_string()))
+    async fn write_file(&self, path: &str, content: &[u8]) -> Result<(), EnvError> {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let encoded = STANDARD.encode(content);
+        let escaped_path = path.replace('\'', "'\\''");
+        let cmd = format!(
+            "mkdir -p \"$(dirname '{}')\" && echo '{}' | base64 -d > '{}'",
+            escaped_path, encoded, escaped_path
+        );
+        let res = self.execute(&cmd, ExecutionConfig::default()).await?;
+        if res.exit_code != 0 {
+            return Err(EnvError::ExecutionFailed(format!(
+                "Failed to write file: {}",
+                res.stderr
+            )));
+        }
+        Ok(())
     }
     
-    async fn read_file(&self, _path: &str) -> Result<Vec<u8>, EnvError> {
-        Err(EnvError::ExecutionFailed("Not implemented for Modal".to_string()))
+    async fn read_file(&self, path: &str) -> Result<Vec<u8>, EnvError> {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let escaped_path = path.replace('\'', "'\\''");
+        let cmd = format!("base64 '{}'", escaped_path);
+        let res = self.execute(&cmd, ExecutionConfig::default()).await?;
+        if res.exit_code != 0 {
+            return Err(EnvError::ExecutionFailed(format!(
+                "Failed to read file: {}",
+                res.stderr
+            )));
+        }
+        let clean_stdout = res.stdout.replace(['\n', '\r'], "").trim().to_string();
+        STANDARD.decode(&clean_stdout).map_err(|e| {
+            EnvError::ExecutionFailed(format!("Failed to decode base64 file content: {}", e))
+        })
     }
     
     async fn destroy(&self) -> Result<(), EnvError> {
@@ -161,16 +188,44 @@ mod tests {
 
     #[tokio::test]
     async fn test_modal_env_write_file() {
-        let env = ModalEnv::new("test-modal", "http://localhost", "test-token");
+        let mock_server = MockServer::start().await;
+        let endpoint = mock_server.uri();
+
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let env = ModalEnv::new("test-modal", endpoint, "test-token");
         let res = env.write_file("test.txt", b"hello").await;
-        assert!(matches!(res, Err(EnvError::ExecutionFailed(_))));
+        assert!(res.is_ok());
     }
 
     #[tokio::test]
     async fn test_modal_env_read_file() {
-        let env = ModalEnv::new("test-modal", "http://localhost", "test-token");
-        let res = env.read_file("test.txt").await;
-        assert!(matches!(res, Err(EnvError::ExecutionFailed(_))));
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let mock_server = MockServer::start().await;
+        let endpoint = mock_server.uri();
+
+        let encoded = STANDARD.encode(b"hello modal");
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "exit_code": 0,
+                "stdout": encoded,
+                "stderr": ""
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let env = ModalEnv::new("test-modal", endpoint, "test-token");
+        let res = env.read_file("test.txt").await.unwrap();
+        assert_eq!(res, b"hello modal");
     }
 
     #[tokio::test]

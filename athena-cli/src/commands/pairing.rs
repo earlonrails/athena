@@ -38,16 +38,8 @@ pub fn run_pairing() -> Result<()> {
 
     match choice {
         1 => {
-            let chars: Vec<char> = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".chars().collect();
-            let mut code = String::new();
-            for i in 0..8 {
-                if i == 4 {
-                    code.push('-');
-                }
-                let idx = rand::random::<usize>() % chars.len();
-                code.push(chars[idx]);
-            }
-            note("Temporary Pairing Code", format!("ATHENA-{}", code))?;
+            let code = generate_pairing_code();
+            note("Temporary Pairing Code", &code)?;
             outro("Send this code in a DM to your configured Telegram/Slack bot to authorize your account.\n(Code is active for this session)")?;
         }
         2 => {
@@ -126,6 +118,31 @@ pub fn run_pairing() -> Result<()> {
     }
     
     Ok(())
+}
+
+pub fn generate_pairing_code() -> String {
+    let chars: Vec<char> = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".chars().collect();
+    let mut code = String::new();
+    for i in 0..8 {
+        if i == 4 {
+            code.push('-');
+        }
+        let idx = rand::random::<usize>() % chars.len();
+        code.push(chars[idx]);
+    }
+    format!("ATHENA-{}", code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_pairing_code() {
+        let code = generate_pairing_code();
+        assert!(code.starts_with("ATHENA-"));
+        assert_eq!(code.len(), 16); // "ATHENA-" (7) + 4 chars + '-' (1) + 4 chars = 16
+    }
 }
 
 // Rust guideline compliant 2026-02-21

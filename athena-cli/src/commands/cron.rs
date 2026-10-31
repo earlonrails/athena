@@ -18,17 +18,7 @@ pub fn run_cron() -> Result<()> {
     match choice {
         1 => {
             println!("\nActive internal cron jobs for Athena:");
-            if config.cron_jobs.is_empty() {
-                outro("No active Athena cron jobs found.")?;
-            } else {
-                let mut msg = String::from("Active Jobs:\n");
-                for (i, job) in config.cron_jobs.iter().enumerate() {
-                    let chan_str = job.channel.clone().map(|c| format!(" (Channel: {})", c)).unwrap_or_default();
-                    let thread_str = job.thread.clone().map(|t| format!(" (Thread: {})", t)).unwrap_or_default();
-                    msg.push_str(&format!("  [{}] '{}' -> {}{}{}\n", i, job.schedule, job.query, chan_str, thread_str));
-                }
-                outro(msg.trim_end())?;
-            }
+            outro(format_cron_jobs(&config.cron_jobs))?;
         }
         2 => {
             let schedule: String = input("Enter cron schedule")
@@ -132,6 +122,55 @@ pub fn run_cron() -> Result<()> {
     }
     
     Ok(())
+}
+
+pub fn format_cron_jobs(jobs: &[CronJob]) -> String {
+    if jobs.is_empty() {
+        return "No active Athena cron jobs found.".to_string();
+    }
+    let mut msg = String::from("Active Jobs:\n");
+    for (i, job) in jobs.iter().enumerate() {
+        let chan_str = job.channel.clone().map(|c| format!(" (Channel: {})", c)).unwrap_or_default();
+        let thread_str = job.thread.clone().map(|t| format!(" (Thread: {})", t)).unwrap_or_default();
+        msg.push_str(&format!("  [{}] '{}' -> {}{}{}\n", i, job.schedule, job.query, chan_str, thread_str));
+    }
+    msg.trim_end().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_cron_jobs_empty() {
+        let empty: Vec<CronJob> = vec![];
+        assert_eq!(format_cron_jobs(&empty), "No active Athena cron jobs found.");
+    }
+
+    #[test]
+    fn test_format_cron_jobs_populated() {
+        let jobs = vec![
+            CronJob {
+                schedule: "0 9 * * *".into(),
+                query: "Check stock prices".into(),
+                channel: Some("123456".into()),
+                thread: Some("99".into()),
+                delivery: Some(vec!["telegram".into()]),
+            },
+            CronJob {
+                schedule: "*/5 * * * *".into(),
+                query: "Ping healthcheck".into(),
+                channel: None,
+                thread: None,
+                delivery: None,
+            },
+        ];
+
+        let res = format_cron_jobs(&jobs);
+        assert!(res.contains("Active Jobs:"));
+        assert!(res.contains("[0] '0 9 * * *' -> Check stock prices (Channel: 123456) (Thread: 99)"));
+        assert!(res.contains("[1] '*/5 * * * *' -> Ping healthcheck"));
+    }
 }
 
 // Rust guideline compliant 2026-02-21

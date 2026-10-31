@@ -8,4 +8,14 @@ pub fn run_version() {
     println!("Inspired by the original Python Athena Agent from Nous Research.");
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_version_runs() {
+        run_version();
+    }
+}
+
 // Rust guideline compliant 2026-02-21

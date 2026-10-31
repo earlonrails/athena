@@ -62,4 +62,26 @@ pub fn run_computer_use() {
     }
 }
 
+pub fn check_computer_use_environment() -> (bool, Option<String>) {
+    let has_xdotool = std::process::Command::new("which")
+        .arg("xdotool")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let display = std::env::var("DISPLAY").ok();
+    (has_xdotool, display)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_check_computer_use_environment() {
+        let (has_driver, display) = check_computer_use_environment();
+        // Just verify it queries safely without panic
+        let _ = (has_driver, display);
+    }
+}
+
 // Rust guideline compliant 2026-02-21

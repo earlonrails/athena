@@ -310,7 +310,6 @@ pub fn athena_home_display() -> String {
 mod tests {
     use super::*;
     use std::env;
-    use std::sync::Mutex;
     use crate::test_utils::ENV_LOCK;
 
     fn setup_test_env() -> tempfile::TempDir {

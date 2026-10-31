@@ -9,12 +9,7 @@ pub fn run_tools() -> Result<()> {
     let mut config = load_config();
     let all_tools = ["filesystem_read", "filesystem_write", "web_search", "command_execution", "browser_automation"];
 
-    let mut msg = String::from("Current Tools Status:\n");
-    for (i, tool) in all_tools.iter().enumerate() {
-        let disabled = config.tools.disabled.contains(&tool.to_string());
-        let status = if disabled { "DISABLED" } else { "ENABLED" };
-        msg.push_str(&format!("  {}. {:<22} : {}\n", i + 1, tool, status));
-    }
+    let msg = format_tools_status(&config.tools.disabled, &all_tools);
     
     let choice: usize = select(msg.trim_end())
         .item(1, "Toggle a tool's enabled/disabled status", "")
@@ -55,6 +50,32 @@ pub fn run_tools() -> Result<()> {
     }
     
     Ok(())
+}
+
+pub fn format_tools_status(disabled_tools: &[String], all_tools: &[&str]) -> String {
+    let mut msg = String::from("Current Tools Status:\n");
+    for (i, tool) in all_tools.iter().enumerate() {
+        let disabled = disabled_tools.contains(&tool.to_string());
+        let status = if disabled { "DISABLED" } else { "ENABLED" };
+        msg.push_str(&format!("  {}. {:<22} : {}\n", i + 1, tool, status));
+    }
+    msg
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_tools_status() {
+        let all_tools = ["filesystem_read", "command_execution"];
+        let disabled = vec!["command_execution".to_string()];
+        let status = format_tools_status(&disabled, &all_tools);
+        assert!(status.contains("filesystem_read"));
+        assert!(status.contains("ENABLED"));
+        assert!(status.contains("command_execution"));
+        assert!(status.contains("DISABLED"));
+    }
 }
 
 // Rust guideline compliant 2026-02-21

@@ -12,20 +12,7 @@ pub fn run_sessions() -> Result<()> {
         let _ = fs::create_dir_all(&sessions_dir);
     }
 
-    let mut entries = Vec::new();
-    if let Ok(dir_entries) = fs::read_dir(&sessions_dir) {
-        for entry in dir_entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()).map(String::from) {
-                    if let Ok(metadata) = entry.metadata() {
-                        let modified = metadata.modified().ok();
-                        entries.push((path, name, modified));
-                    }
-                }
-            }
-        }
-    }
+    let mut entries = get_session_files(&sessions_dir);
 
     if entries.is_empty() {
         outro_cancel("No past session files found.")?;
@@ -100,6 +87,43 @@ pub fn run_sessions() -> Result<()> {
     }
     
     Ok(())
+}
+
+pub fn get_session_files(sessions_dir: &std::path::Path) -> Vec<(std::path::PathBuf, String, Option<std::time::SystemTime>)> {
+    let mut entries = Vec::new();
+    if let Ok(dir_entries) = fs::read_dir(sessions_dir) {
+        for entry in dir_entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()).map(String::from) {
+                    let modified = entry.metadata().ok().and_then(|m| m.modified().ok());
+                    entries.push((path, name, modified));
+                }
+            }
+        }
+    }
+    entries
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_session_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path().join("sessions");
+        fs::create_dir_all(&sessions_dir).unwrap();
+
+        fs::write(sessions_dir.join("session_1.json"), "{}").unwrap();
+        fs::write(sessions_dir.join("session_2.json"), "{}").unwrap();
+
+        let files = get_session_files(&sessions_dir);
+        assert_eq!(files.len(), 2);
+        let names: Vec<String> = files.into_iter().map(|f| f.1).collect();
+        assert!(names.contains(&"session_1.json".to_string()));
+        assert!(names.contains(&"session_2.json".to_string()));
+    }
 }
 
 // Rust guideline compliant 2026-02-21

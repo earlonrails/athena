@@ -130,4 +130,121 @@ impl SkillImprover {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use athena_providers::{Choice, ChatCompletionResponse, ProviderError, ProviderProfile};
+
+    struct TestMockProvider {
+        profile: ProviderProfile,
+    }
+
+    #[async_trait]
+    impl LLMProvider for TestMockProvider {
+        fn profile(&self) -> &ProviderProfile {
+            &self.profile
+        }
+
+        async fn fetch_models(&self, _api_key: Option<&str>, _timeout: f64) -> Result<Vec<String>, ProviderError> {
+            Ok(vec![])
+        }
+
+        async fn create_chat_completion(
+            &self,
+            _request: ChatCompletionRequest,
+        ) -> Result<ChatCompletionResponse, ProviderError> {
+            let json_body = serde_json::json!({
+                "name": "Improved Skill",
+                "description": "Refined description",
+                "body": "Better, updated instructions"
+            }).to_string();
+
+            Ok(ChatCompletionResponse {
+                id: "test".into(),
+                model: "mock".into(),
+                choices: vec![Choice {
+                    index: 0,
+                    message: ChatMessage {
+                        role: MessageRole::Assistant,
+                        content: json_body,
+                        name: None,
+                        tool_calls: None,
+                        tool_call_id: None,
+                    },
+                    finish_reason: Some("stop".into()),
+                }],
+                usage: None,
+                created: 0,
+            })
+        }
+
+        async fn create_chat_completion_stream(
+            &self,
+            _request: ChatCompletionRequest,
+        ) -> Result<athena_providers::ChatCompletionStream, ProviderError> {
+            Err(ProviderError::ApiRequestFailed("unused".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_skill_improvement_pass() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("skills_improve.db");
+        let store = Arc::new(SkillStore::new(&db_path).unwrap());
+        let manager = Arc::new(SkillManager::new(&db_path).unwrap());
+
+        // Skill 1: low usage (usage 2) -> should NOT be improved
+        let skill1 = crate::Skill {
+            id: "s1".into(),
+            name: "Skill 1".into(),
+            description: "Desc 1".into(),
+            instructions: "Body 1".into(),
+            usage_count: 2,
+            success_count: 0,
+            created_at: 10,
+            updated_at: 10,
+        };
+        let emb1 = manager.embed_text(&skill1.description).unwrap();
+        store.insert_skill(&skill1, &emb1).unwrap();
+
+        // Skill 2: high usage (6) and low success rate (1/6 = 16.7%) -> should BE improved
+        let skill2 = crate::Skill {
+            id: "s2".into(),
+            name: "Skill 2".into(),
+            description: "Desc 2".into(),
+            instructions: "Body 2".into(),
+            usage_count: 6,
+            success_count: 1,
+            created_at: 10,
+            updated_at: 10,
+        };
+        let emb2 = manager.embed_text(&skill2.description).unwrap();
+        store.insert_skill(&skill2, &emb2).unwrap();
+
+        let provider = Arc::new(TestMockProvider {
+            profile: ProviderProfile::new("mock"),
+        });
+
+        let improved = SkillImprover::run_improvement_pass(
+            store.clone(),
+            manager.clone(),
+            provider,
+            "mock-model",
+            None,
+            None,
+        ).await.unwrap();
+
+        assert_eq!(improved, 1);
+
+        let all_skills = store.get_all_skills().unwrap();
+        let s2_after = all_skills.into_iter().find(|s| s.id == "s2").unwrap();
+        assert_eq!(s2_after.name, "Improved Skill");
+        assert_eq!(s2_after.description, "Refined description");
+        assert_eq!(s2_after.instructions, "Better, updated instructions");
+        assert_eq!(s2_after.usage_count, 0);
+        assert_eq!(s2_after.success_count, 0);
+    }
+}
+
 // Rust guideline compliant 2026-02-21

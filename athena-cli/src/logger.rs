@@ -54,3 +54,38 @@ impl SessionLogger for DbSessionLogger {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_db_session_logger() {
+        let db = Arc::new(SessionDB::new(Some(PathBuf::from(":memory:"))).unwrap());
+        let logger = DbSessionLogger {
+            db: db.clone(),
+            model: "gpt-4o".to_string(),
+        };
+
+        let messages = vec![
+            Message::User {
+                content: "Hello Athena".to_string(),
+                name: None,
+            },
+            Message::Assistant {
+                content: Some("Hello! How can I help you today?".to_string()),
+                tool_calls: None,
+                reasoning_content: None,
+            },
+        ];
+
+        logger.log_session(&messages, Some("You are helpful."));
+
+        let recent = db.list_recent_sessions(10).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].model.as_deref(), Some("gpt-4o"));
+    }
+}
+
+// Rust guideline compliant 2026-02-21

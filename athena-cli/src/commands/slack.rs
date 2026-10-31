@@ -36,7 +36,25 @@ pub fn run_slack() -> Result<()> {
             }
         }
         3 => {
-            let manifest = r#"{
+            let manifest = generate_slack_manifest();
+            let path = get_athena_home().join("slack-manifest.json");
+            match fs::write(&path, manifest) {
+                Ok(()) => {
+                    note("Success", format!("Generated Slack Manifest template successfully!\nSaved to: {}", path.display()))?;
+                }
+                Err(e) => {
+                    outro_cancel(format!("Failed to save manifest: {}", e))?;
+                }
+            }
+        }
+        _ => { outro("Goodbye!")?; }
+    }
+    
+    Ok(())
+}
+
+pub fn generate_slack_manifest() -> &'static str {
+    r#"{
     "display_information": {
         "name": "Athena Agent"
     },
@@ -64,21 +82,22 @@ pub fn run_slack() -> Result<()> {
             ]
         }
     }
-}"#;
-            let path = get_athena_home().join("slack-manifest.json");
-            match fs::write(&path, manifest) {
-                Ok(()) => {
-                    note("Success", format!("Generated Slack Manifest template successfully!\nSaved to: {}", path.display()))?;
-                }
-                Err(e) => {
-                    outro_cancel(format!("Failed to save manifest: {}", e))?;
-                }
-            }
-        }
-        _ => { outro("Goodbye!")?; }
+}"#
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_slack_manifest() {
+        let manifest = generate_slack_manifest();
+        assert!(manifest.contains("Athena Agent"));
+        assert!(manifest.contains("chat:write"));
+        assert!(manifest.contains("app_mention"));
+        let parsed: serde_json::Value = serde_json::from_str(manifest).unwrap();
+        assert_eq!(parsed["display_information"]["name"], "Athena Agent");
     }
-    
-    Ok(())
 }
 
 // Rust guideline compliant 2026-02-21

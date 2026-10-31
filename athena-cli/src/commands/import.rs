@@ -50,6 +50,19 @@ pub fn run_import() -> Result<()> {
         let _ = fs::create_dir_all(&home_dir);
     }
 
+    match extract_zip_to_dir(&mut archive, &home_dir) {
+        Ok(_) => s.stop("Restore completed successfully!"),
+        Err(e) => s.error(format!("Restore failed: {}", e)),
+    }
+    
+    Ok(())
+}
+
+pub fn extract_zip_to_dir<R: std::io::Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    target_dir: &std::path::Path,
+) -> std::io::Result<usize> {
+    let mut count = 0;
     for i in 0..archive.len() {
         let mut file = match archive.by_index(i) {
             Ok(f) => f,
@@ -57,7 +70,7 @@ pub fn run_import() -> Result<()> {
         };
 
         let outpath = match file.enclosed_name() {
-            Some(path) => home_dir.join(path),
+            Some(path) => target_dir.join(path),
             None => continue,
         };
 
@@ -70,18 +83,39 @@ pub fn run_import() -> Result<()> {
                 }
             }
 
-            let mut outfile = match File::create(&outpath) {
-                Ok(f) => f,
-                Err(_) => continue,
-            };
-
-            let _ = std::io::copy(&mut file, &mut outfile);
+            let mut outfile = File::create(&outpath)?;
+            std::io::copy(&mut file, &mut outfile)?;
+            count += 1;
         }
     }
+    Ok(count)
+}
 
-    s.stop("Restore completed successfully!");
-    
-    Ok(())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn test_extract_zip_to_dir() {
+        let buffer = Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(buffer);
+        let options = zip::write::FileOptions::default();
+        zip.start_file("restored_file.txt", options).unwrap();
+        use std::io::Write;
+        zip.write_all(b"restored content").unwrap();
+        let finished = zip.finish().unwrap();
+
+        let reader = Cursor::new(finished.into_inner());
+        let mut archive = zip::ZipArchive::new(reader).unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extracted = extract_zip_to_dir(&mut archive, temp_dir.path()).unwrap();
+        assert_eq!(extracted, 1);
+        let restored_path = temp_dir.path().join("restored_file.txt");
+        assert!(restored_path.exists());
+        assert_eq!(fs::read_to_string(restored_path).unwrap(), "restored content");
+    }
 }
 
 // Rust guideline compliant 2026-02-21

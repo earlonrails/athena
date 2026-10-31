@@ -14,25 +14,7 @@ pub fn run_checkpoints() {
         return;
     }
 
-    let mut entries = Vec::new();
-    if let Ok(dir_entries) = fs::read_dir(&checkpoints_dir) {
-        for entry in dir_entries.flatten() {
-            let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()).map(String::from) {
-                if let Ok(metadata) = entry.metadata() {
-                    let created = metadata.created()
-                        .or_else(|_| metadata.modified())
-                        .ok();
-                    let size = if path.is_file() {
-                        metadata.len()
-                    } else {
-                        0
-                    };
-                    entries.push((path, name, created, size));
-                }
-            }
-        }
-    }
+    let mut entries = get_checkpoints(&checkpoints_dir);
 
     if entries.is_empty() {
         println!("No checkpoints recorded yet.");
@@ -118,6 +100,44 @@ pub fn run_checkpoints() {
             }
         }
         _ => {}
+    }
+}
+
+pub fn get_checkpoints(checkpoints_dir: &std::path::Path) -> Vec<(std::path::PathBuf, String, Option<std::time::SystemTime>, u64)> {
+    let mut entries = Vec::new();
+    if let Ok(dir_entries) = fs::read_dir(checkpoints_dir) {
+        for entry in dir_entries.flatten() {
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()).map(String::from) {
+                if let Ok(metadata) = entry.metadata() {
+                    let created = metadata.created().or_else(|_| metadata.modified()).ok();
+                    let size = if path.is_file() { metadata.len() } else { 0 };
+                    entries.push((path, name, created, size));
+                }
+            }
+        }
+    }
+    entries
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_checkpoints() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cp_dir = temp_dir.path().join("checkpoints");
+        fs::create_dir_all(&cp_dir).unwrap();
+
+        fs::write(cp_dir.join("cp_1.tar.gz"), b"checkpoint 1").unwrap();
+        fs::write(cp_dir.join("cp_2.tar.gz"), b"checkpoint 2").unwrap();
+
+        let list = get_checkpoints(&cp_dir);
+        assert_eq!(list.len(), 2);
+        let names: Vec<String> = list.into_iter().map(|c| c.1).collect();
+        assert!(names.contains(&"cp_1.tar.gz".to_string()));
+        assert!(names.contains(&"cp_2.tar.gz".to_string()));
     }
 }
 

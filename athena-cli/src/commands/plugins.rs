@@ -30,20 +30,13 @@ pub fn run_plugins() {
     match choice {
         1 => {
             println!("\nInstalled Plugins:");
-            let mut count = 0;
-            if let Ok(entries) = fs::read_dir(&plugins_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_file() {
-                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                            println!("  • {} ({})", name, path.display());
-                            count += 1;
-                        }
-                    }
-                }
-            }
-            if count == 0 {
+            let plugins = list_plugin_files(&plugins_dir);
+            if plugins.is_empty() {
                 println!("  No WASM plugins installed.");
+            } else {
+                for name in plugins {
+                    println!("  • {}", name);
+                }
             }
         }
         2 => {
@@ -89,6 +82,40 @@ pub fn run_plugins() {
             }
         }
         _ => {}
+    }
+}
+
+pub fn list_plugin_files(plugins_dir: &std::path::Path) -> Vec<String> {
+    let mut plugins = Vec::new();
+    if let Ok(entries) = fs::read_dir(plugins_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    plugins.push(name.to_string());
+                }
+            }
+        }
+    }
+    plugins.sort();
+    plugins
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_plugin_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugins_dir = temp_dir.path().join("plugins");
+        fs::create_dir_all(&plugins_dir).unwrap();
+
+        fs::write(plugins_dir.join("analyzer.wasm"), b"wasm").unwrap();
+        fs::write(plugins_dir.join("parser.wasm"), b"wasm").unwrap();
+
+        let list = list_plugin_files(&plugins_dir);
+        assert_eq!(list, vec!["analyzer.wasm".to_string(), "parser.wasm".to_string()]);
     }
 }
 

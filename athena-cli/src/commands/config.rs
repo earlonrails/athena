@@ -5,6 +5,11 @@ use anyhow::Result;
 pub fn run_config_show() -> Result<()> {
     let config = load_config();
     intro("Current Athena Configuration")?;
+    note("Configuration Details", format_config_details(&config))?;
+    Ok(())
+}
+
+pub fn format_config_details(config: &athena_core::config::AthenaConfig) -> String {
     let mut details = String::new();
     details.push_str(&format!("Profile:          {:?}\n", config.active_profile.as_deref().unwrap_or("default")));
     details.push_str(&format!("Active Provider:  {}\n", config.model.provider));
@@ -16,9 +21,7 @@ pub fn run_config_show() -> Result<()> {
     details.push_str(&format!("Slack Enabled:    {}\n", config.gateway.slack_enabled));
     details.push_str(&format!("WhatsApp Enabled: {}\n", config.gateway.whatsapp_enabled));
     details.push_str(&format!("Config Version:   {}", config.config_version));
-    
-    note("Configuration Details", details)?;
-    Ok(())
+    details
 }
 
 pub fn run_config_edit() -> Result<()> {
@@ -54,6 +57,20 @@ pub fn run_config_edit() -> Result<()> {
         Err(e) => outro_cancel(format!("Failed to save config: {}", e))?,
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_config_details() {
+        let config = athena_core::config::AthenaConfig::default();
+        let formatted = format_config_details(&config);
+        assert!(formatted.contains("Active Provider:"));
+        assert!(formatted.contains("Terminal Backend:"));
+        assert!(formatted.contains("Max Iterations:"));
+    }
 }
 
 // Rust guideline compliant 2026-02-21

@@ -53,23 +53,7 @@ fn install_gateway() {
         note("Warning", format!("Could not find athena-gateway at {:?}. Will assume it's in your PATH.", gateway_binary)).ok();
     }
 
-    let service_content = format!(
-r#"[Unit]
-Description=Athena Background Gateway
-After=network.target
-
-[Service]
-Type=simple
-ExecStart={}
-Restart=on-failure
-RestartSec=5
-Environment="RUST_LOG=info"
-
-[Install]
-WantedBy=default.target
-"#,
-        gateway_binary.display()
-    );
+    let service_content = generate_systemd_service_file(&gateway_binary);
 
     let systemd_dir = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"))
@@ -221,6 +205,42 @@ fn run_foreground_gateway() {
         
     let _ = child.wait();
     outro("Gateway stopped.").ok();
+}
+
+pub fn generate_systemd_service_file(binary_path: &std::path::Path) -> String {
+    format!(
+r#"[Unit]
+Description=Athena Background Gateway
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={}
+Restart=on-failure
+RestartSec=5
+Environment="RUST_LOG=info"
+
+[Install]
+WantedBy=default.target
+"#,
+        binary_path.display()
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_generate_systemd_service_file() {
+        let path = Path::new("/usr/local/bin/athena-gateway");
+        let service = generate_systemd_service_file(path);
+        assert!(service.contains("Description=Athena Background Gateway"));
+        assert!(service.contains("ExecStart=/usr/local/bin/athena-gateway"));
+        assert!(service.contains("Restart=on-failure"));
+        assert!(service.contains("WantedBy=default.target"));
+    }
 }
 
 // Rust guideline compliant 2026-02-21

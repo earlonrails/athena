@@ -492,6 +492,7 @@ name = "athena-skills"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "athena-core",
  "athena-providers",
  "fastembed",
@@ -543,6 +544,7 @@ dependencies = [
  "athena-agent",
  "athena-core",
  "athena-providers",
+ "athena-state",
  "athena-tools",
  "dotenvy",
  "futures",

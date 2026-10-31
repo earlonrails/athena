@@ -56,4 +56,18 @@ impl EventHandler for Handler {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_discord_handler_initialization() {
+        let registry = Arc::new(ToolRegistry::new());
+        let handler = Handler {
+            registry: registry.clone(),
+        };
+        assert!(Arc::ptr_eq(&handler.registry, &registry));
+    }
+}
+
 // Rust guideline compliant 2026-02-21

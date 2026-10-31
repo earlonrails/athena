@@ -54,4 +54,26 @@ pub fn run_fallback() -> Result<()> {
     Ok(())
 }
 
+pub fn format_fallback_list(fallbacks: &[String]) -> String {
+    if fallbacks.is_empty() {
+        "None configured.".to_string()
+    } else {
+        fallbacks.join(", ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_fallback_list() {
+        assert_eq!(format_fallback_list(&[]), "None configured.");
+        assert_eq!(
+            format_fallback_list(&["anthropic".to_string(), "openrouter".to_string()]),
+            "anthropic, openrouter"
+        );
+    }
+}
+
 // Rust guideline compliant 2026-02-21

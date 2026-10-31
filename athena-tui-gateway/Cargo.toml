@@ -9,6 +9,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 athena-agent = { path = "../athena-agent" }
 athena-tools = { path = "../athena-tools" }
+athena-state = { path = "../athena-state" }
 athena-core = { path = "../athena-core" }
 tracing = "0.1"
 dotenvy = "0.15"

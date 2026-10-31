@@ -16,19 +16,7 @@ pub fn run_auth() -> Result<()> {
         ("xai",         "XAI_API_KEY"),
     ];
 
-    let mut msg = String::from("Current credentials pool status:\n");
-    for (i, (name, env_var)) in providers.iter().enumerate() {
-        let status = if let Some(val) = get_env_value(env_var) {
-            if val.len() > 8 {
-                format!("✓ Configured ({}...{})", &val[..4], &val[val.len()-4..])
-            } else {
-                "✓ Configured (****)".to_string()
-            }
-        } else {
-            "✗ Not configured".to_string()
-        };
-        msg.push_str(&format!("  {}. {:<12} : {}\n", i + 1, name, status));
-    }
+    let msg = format_auth_pool_status(&providers);
     
     let choice: usize = select(msg.trim_end())
         .item(1, "Add/update a credential", "")
@@ -80,6 +68,37 @@ pub fn run_auth() -> Result<()> {
     }
     
     Ok(())
+}
+
+pub fn format_auth_pool_status(providers: &[(&str, &str)]) -> String {
+    let mut msg = String::from("Current credentials pool status:\n");
+    for (i, (name, env_var)) in providers.iter().enumerate() {
+        let status = if let Some(val) = get_env_value(env_var) {
+            if val.len() > 8 {
+                format!("✓ Configured ({}...{})", &val[..4], &val[val.len()-4..])
+            } else {
+                "✓ Configured (****)".to_string()
+            }
+        } else {
+            "✗ Not configured".to_string()
+        };
+        msg.push_str(&format!("  {}. {:<12} : {}\n", i + 1, name, status));
+    }
+    msg
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_auth_pool_status() {
+        let providers = [("test_prov", "NON_EXISTENT_KEY_12345")];
+        let status = format_auth_pool_status(&providers);
+        assert!(status.contains("Current credentials pool status"));
+        assert!(status.contains("test_prov"));
+        assert!(status.contains("✗ Not configured"));
+    }
 }
 
 // Rust guideline compliant 2026-02-21

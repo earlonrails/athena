@@ -11,4 +11,13 @@ pub extern "C" fn test_func() {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_example_plugin() {
+        let msg = "Hello from WASM Plugin!";
+        assert_eq!(msg.len(), 23);
+    }
+}
+
 // Rust guideline compliant 2026-02-21

@@ -78,4 +78,30 @@ impl BrowserAutomation {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_browser_automation_initial_state() {
+        let mut browser = BrowserAutomation::new();
+        assert!(browser.driver.is_none());
+
+        // Test error handling when not connected
+        assert!(browser.goto("https://example.com").await.is_err());
+        assert!(browser.get_text().await.is_err());
+        assert!(browser.click("#submit").await.is_err());
+        assert!(browser.fill("#input", "hello").await.is_err());
+
+        // Close on disconnected browser is a safe no-op
+        assert!(browser.close().await.is_ok());
+    }
+
+    #[test]
+    fn test_browser_automation_default() {
+        let browser = BrowserAutomation::default();
+        assert!(browser.driver.is_none());
+    }
+}
+
 // Rust guideline compliant 2026-02-21

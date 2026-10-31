@@ -31,8 +31,8 @@ pub fn run_completion() {
     };
 
     println!("\n# --- COPY THE SCRIPT BELOW ---");
-    let mut cmd = Args::command();
-    generate(shell, &mut cmd, "athena", &mut io::stdout());
+    let script = generate_completion_script(shell);
+    let _ = io::stdout().write_all(&script);
     println!("# --- END OF SCRIPT ---");
 
     println!("\nTip: To load this automatically on startup, redirect this output to a file and source it:");
@@ -41,6 +41,26 @@ pub fn run_completion() {
         Shell::Zsh => println!("  athena completion > ~/.athena/completion.zsh\n  echo \"source ~/.athena/completion.zsh\" >> ~/.zshrc"),
         Shell::Fish => println!("  athena completion > ~/.config/fish/completions/athena.fish"),
         _ => {}
+    }
+}
+
+pub fn generate_completion_script(shell: Shell) -> Vec<u8> {
+    let mut cmd = Args::command();
+    let mut buf = Vec::new();
+    generate(shell, &mut cmd, "athena", &mut buf);
+    buf
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_completion_script() {
+        let bash_script = generate_completion_script(Shell::Bash);
+        assert!(!bash_script.is_empty());
+        let bash_str = String::from_utf8_lossy(&bash_script);
+        assert!(bash_str.contains("athena"));
     }
 }
 

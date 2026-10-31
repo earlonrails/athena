@@ -117,4 +117,27 @@ fn default_model_for_provider(slug: &str) -> &'static str {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_provider_env_key() {
+        assert_eq!(provider_env_key("openai"), "OPENAI_API_KEY");
+        assert_eq!(provider_env_key("anthropic"), "ANTHROPIC_API_KEY");
+        assert_eq!(provider_env_key("google"), "GOOGLE_API_KEY");
+        assert_eq!(provider_env_key("mistral"), "MISTRAL_API_KEY");
+        assert_eq!(provider_env_key("unknown"), "");
+    }
+
+    #[test]
+    fn test_default_model_for_provider() {
+        assert_eq!(default_model_for_provider("openai"), "gpt-4o");
+        assert_eq!(default_model_for_provider("anthropic"), "claude-sonnet-4-20250514");
+        assert_eq!(default_model_for_provider("google"), "gemini-2.5-pro");
+        assert_eq!(default_model_for_provider("mistral"), "mistral-large-latest");
+        assert_eq!(default_model_for_provider("other"), "gpt-4o");
+    }
+}
+
 // Rust guideline compliant 2026-02-21

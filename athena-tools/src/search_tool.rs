@@ -62,4 +62,51 @@ inventory::submit! {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_search_sessions_tool() {
+        let guard = athena_core::test_utils::EnvGuard::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        guard.set_home(temp_dir.path());
+
+        let tool = SearchSessionsTool;
+        assert_eq!(tool.name(), "search_past_conversations");
+        assert_eq!(tool.toolset(), "memory");
+
+        // Missing query param error handling
+        let err = tool.handle(serde_json::json!({})).await.unwrap_err();
+        assert!(err.contains("Missing 'query'"));
+
+        // Normal query when empty
+        let res = tool.handle(serde_json::json!({"query": "rust"})).await.unwrap();
+        assert_eq!(res, serde_json::json!("No past sessions found matching the query."));
+
+        // Save a mock session in DB and test match
+        let db = SessionDB::new(None).unwrap();
+        db.insert_session(&athena_state::Session {
+            id: "s1".to_string(),
+            title: Some("Rust Async Guide".to_string()),
+            model: Some("gpt-4o".to_string()),
+            system_prompt: None,
+            started_at: 1000.0,
+        }).unwrap();
+        db.insert_message(&athena_state::MessageRow {
+            id: 1,
+            session_id: "s1".to_string(),
+            role: "user".to_string(),
+            content: Some("How do I optimize rust async code?".to_string()),
+            tool_calls: None,
+            timestamp: 1001.0,
+        }).unwrap();
+
+        let res = tool.handle(serde_json::json!({"query": "optimize"})).await.unwrap();
+        let res_str = res.as_str().unwrap();
+        assert!(res_str.contains("Rust Async Guide"));
+        assert!(res_str.contains("s1"));
+    }
+}
+
 // Rust guideline compliant 2026-02-21

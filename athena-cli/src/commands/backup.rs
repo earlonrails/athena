@@ -94,4 +94,39 @@ fn add_directory_to_zip<W: Write + io::Seek>(
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn test_add_directory_to_zip() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let src_path = temp_dir.path().join("athena_home");
+        std::fs::create_dir_all(src_path.join("skills")).unwrap();
+        std::fs::create_dir_all(src_path.join("logs")).unwrap();
+
+        std::fs::write(src_path.join("config.yaml"), "version: 1").unwrap();
+        std::fs::write(src_path.join("skills").join("test_skill.md"), "# Skill").unwrap();
+        std::fs::write(src_path.join("logs").join("agent.log"), "ignore this log").unwrap();
+
+        let buffer = Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(buffer);
+        add_directory_to_zip(&mut zip, &src_path, &src_path).unwrap();
+        let finished = zip.finish().unwrap();
+
+        // Read back the zip file
+        let reader = Cursor::new(finished.into_inner());
+        let archive = zip::ZipArchive::new(reader).unwrap();
+
+        let mut names: Vec<String> = archive.file_names().map(|s| s.to_string()).collect();
+        names.sort();
+
+        assert!(names.contains(&"config.yaml".to_string()));
+        assert!(names.contains(&"skills/test_skill.md".to_string()));
+        // logs must be excluded
+        assert!(!names.iter().any(|n| n.starts_with("logs")));
+    }
+}
+
 // Rust guideline compliant 2026-02-21

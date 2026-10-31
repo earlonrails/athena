@@ -2,13 +2,17 @@ use athena_core::config::{load_config, get_env_value};
 use std::process::Command;
 
 pub fn run_status() {
-    println!("\nAthena Component Status");
-    println!("═════════════════════════\n");
-
     let config = load_config();
+    print!("{}", get_status_overview(&config));
+}
+
+pub fn get_status_overview(config: &athena_core::config::AthenaConfig) -> String {
+    let mut out = String::new();
+    out.push_str("\nAthena Component Status\n");
+    out.push_str("═════════════════════════\n\n");
 
     // 1. LLM Provider Connection Status
-    println!("  LLM Providers:");
+    out.push_str("  LLM Providers:\n");
     let providers = [
         ("OpenAI API", "OPENAI_API_KEY"),
         ("Anthropic API", "ANTHROPIC_API_KEY"),
@@ -19,19 +23,18 @@ pub fn run_status() {
     for (name, env_var) in &providers {
         let is_configured = get_env_value(env_var).is_some();
         let status = if is_configured { "✓ Configured" } else { "✗ Not configured" };
-        println!("    • {:<18} : {}", name, status);
+        out.push_str(&format!("    • {:<18} : {}\n", name, status));
     }
-    println!();
+    out.push('\n');
 
     // 2. Gateway/Messaging Platforms Status
-    println!("  Gateways:");
-    println!("    • Telegram Gateway   : {}", if config.gateway.telegram_enabled { "✓ Enabled" } else { "✗ Disabled" });
-    println!("    • Discord Gateway    : {}", if config.gateway.discord_enabled { "✓ Enabled" } else { "✗ Disabled" });
-    println!("    • WhatsApp Gateway   : {}", if config.gateway.whatsapp_enabled { "✓ Enabled" } else { "✗ Disabled" });
-    println!();
+    out.push_str("  Gateways:\n");
+    out.push_str(&format!("    • Telegram Gateway   : {}\n", if config.gateway.telegram_enabled { "✓ Enabled" } else { "✗ Disabled" }));
+    out.push_str(&format!("    • Discord Gateway    : {}\n", if config.gateway.discord_enabled { "✓ Enabled" } else { "✗ Disabled" }));
+    out.push_str(&format!("    • WhatsApp Gateway   : {}\n\n", if config.gateway.whatsapp_enabled { "✓ Enabled" } else { "✗ Disabled" }));
 
     // 3. Execution Environment dependencies
-    println!("  Dependencies:");
+    out.push_str("  Dependencies:\n");
 
     // Check docker
     let docker_check = Command::new("docker").arg("--version").output();
@@ -42,7 +45,7 @@ pub fn run_status() {
         }
         Err(_) => "✗ Not installed".to_string(),
     };
-    println!("    • Docker Engine      : {}", docker_status);
+    out.push_str(&format!("    • Docker Engine      : {}\n", docker_status));
 
     // Check git
     let git_check = Command::new("git").arg("--version").output();
@@ -53,7 +56,7 @@ pub fn run_status() {
         }
         Err(_) => "✗ Not installed".to_string(),
     };
-    println!("    • Git CLI            : {}", git_status);
+    out.push_str(&format!("    • Git CLI            : {}\n", git_status));
 
     // Check node
     let node_check = Command::new("node").arg("--version").output();
@@ -64,9 +67,25 @@ pub fn run_status() {
         }
         Err(_) => "✗ Not installed".to_string(),
     };
-    println!("    • Node.js            : {}", node_status);
+    out.push_str(&format!("    • Node.js            : {}\n", node_status));
 
-    println!("\nAll status checks completed.");
+    out.push_str("\nAll status checks completed.\n");
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_status_overview() {
+        let config = athena_core::config::AthenaConfig::default();
+        let status = get_status_overview(&config);
+        assert!(status.contains("Athena Component Status"));
+        assert!(status.contains("LLM Providers:"));
+        assert!(status.contains("Gateways:"));
+        assert!(status.contains("Dependencies:"));
+    }
 }
 
 // Rust guideline compliant 2026-02-21

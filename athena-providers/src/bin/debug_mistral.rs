@@ -25,4 +25,16 @@ async fn main() {
     println!("Resolved Key: {:?}", resolved_key.map(|s| format!("{}...", &s[0..4])));
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mistral_debug_binary_logic() {
+        let provider = MistralProvider::new();
+        let profile = provider.profile().clone();
+        assert_eq!(profile.name, "mistral");
+    }
+}
+
 // Rust guideline compliant 2026-02-21

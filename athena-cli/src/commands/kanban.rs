@@ -19,29 +19,8 @@ pub fn run_kanban() -> Result<()> {
 
     match choice {
         1 => {
-            let mut output = String::from("\n--- KANBAN BOARD ---\n");
             let cards = db.get_cards("default").unwrap_or_default();
-            
-            let columns = vec![
-                ("col-todo", "TODO"),
-                ("col-in-progress", "IN PROGRESS"),
-                ("col-done", "DONE"),
-            ];
-            
-            for (col_id, col_name) in &columns {
-                output.push_str(&format!("\n  [{}]\n", col_name));
-                let col_cards: Vec<_> = cards.iter().filter(|c| c.column_id == *col_id).collect();
-                if col_cards.is_empty() {
-                    output.push_str("    (No tasks)\n");
-                } else {
-                    for card in col_cards {
-                        let assignee = card.assignee.as_deref().unwrap_or("unassigned");
-                        output.push_str(&format!("    #{}: {} (Assigned to: {})\n", card.id, card.title, assignee));
-                    }
-                }
-            }
-            output.push_str("\n--------------------");
-            outro(output)?;
+            outro(format_kanban_board(&cards))?;
         }
         2 => {
             let title: String = input("Enter task title").interact()?;
@@ -119,6 +98,64 @@ pub fn run_kanban() -> Result<()> {
     }
     
     Ok(())
+}
+
+pub fn format_kanban_board(cards: &[athena_state::kanban::KanbanCard]) -> String {
+    let mut output = String::from("\n--- KANBAN BOARD ---\n");
+    let columns = [
+        ("col-todo", "TODO"),
+        ("col-in-progress", "IN PROGRESS"),
+        ("col-done", "DONE"),
+    ];
+
+    for (col_id, col_name) in &columns {
+        output.push_str(&format!("\n  [{}]\n", col_name));
+        let col_cards: Vec<_> = cards.iter().filter(|c| c.column_id == *col_id).collect();
+        if col_cards.is_empty() {
+            output.push_str("    (No tasks)\n");
+        } else {
+            for card in col_cards {
+                let assignee = card.assignee.as_deref().unwrap_or("unassigned");
+                output.push_str(&format!("    #{}: {} (Assigned to: {})\n", card.id, card.title, assignee));
+            }
+        }
+    }
+    output.push_str("\n--------------------");
+    output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use athena_state::kanban::KanbanCard;
+
+    #[test]
+    fn test_format_kanban_board() {
+        let cards = vec![
+            KanbanCard {
+                id: "1".into(),
+                board_id: "default".into(),
+                column_id: "col-todo".into(),
+                title: "Write port tests".into(),
+                assignee: Some("kevin".into()),
+            },
+            KanbanCard {
+                id: "2".into(),
+                board_id: "default".into(),
+                column_id: "col-done".into(),
+                title: "Migrate database".into(),
+                assignee: None,
+            },
+        ];
+
+        let formatted = format_kanban_board(&cards);
+        assert!(formatted.contains("TODO"));
+        assert!(formatted.contains("#1: Write port tests (Assigned to: kevin)"));
+        assert!(formatted.contains("IN PROGRESS"));
+        assert!(formatted.contains("(No tasks)"));
+        assert!(formatted.contains("DONE"));
+        assert!(formatted.contains("#2: Migrate database (Assigned to: unassigned)"));
+    }
 }
 
 // Rust guideline compliant 2026-02-21

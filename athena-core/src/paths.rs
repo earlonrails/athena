@@ -166,7 +166,6 @@ pub const AI_GATEWAY_BASE_URL: &str = "https://ai-gateway.vercel.sh/v1";
 mod tests {
     use super::*;
     use std::env;
-    use std::sync::Mutex;
     use tempfile::TempDir;
     use crate::test_utils::ENV_LOCK;
 
@@ -363,7 +362,7 @@ mod tests {
     #[test]
     fn test_display_athena_home_no_strip_prefix() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = setup_test_env();
+        let _dir = setup_test_env();
 
         // We set HOME to something completely disjoint from ATHENA_HOME
         // so strip_prefix fails.

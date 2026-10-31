@@ -65,12 +65,7 @@ pub fn run_webhook() -> Result<()> {
                 return Ok(());
             }
 
-            let chars: Vec<char> = "abcdefghijklmnopqrstuvwxyz0123456789".chars().collect();
-            let mut secret = String::new();
-            for _ in 0..16 {
-                let idx = rand::random::<usize>() % chars.len();
-                secret.push(chars[idx]);
-            }
+            let secret = generate_webhook_secret();
 
             data.subscriptions.push(Subscription {
                 name,
@@ -124,6 +119,28 @@ pub fn run_webhook() -> Result<()> {
     }
     
     Ok(())
+}
+
+pub fn generate_webhook_secret() -> String {
+    let chars: Vec<char> = "abcdefghijklmnopqrstuvwxyz0123456789".chars().collect();
+    let mut secret = String::new();
+    for _ in 0..16 {
+        let idx = rand::random::<usize>() % chars.len();
+        secret.push(chars[idx]);
+    }
+    secret
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_webhook_secret() {
+        let secret = generate_webhook_secret();
+        assert_eq!(secret.len(), 16);
+        assert!(secret.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
 }
 
 // Rust guideline compliant 2026-02-21

@@ -340,12 +340,13 @@ async fn main() {
 mod tests {
     use super::*;
     use athena_providers::LLMProvider;
-    use async_trait::async_trait;
 
+    #[allow(dead_code)]
     struct DummyProvider {
         profile: athena_providers::ProviderProfile,
     }
 
+    #[allow(dead_code)]
     impl Default for DummyProvider {
         fn default() -> Self {
             Self {
@@ -354,7 +355,7 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
+    #[athena_providers::async_trait]
     impl LLMProvider for DummyProvider {
         fn profile(&self) -> &athena_providers::ProviderProfile {
             &self.profile

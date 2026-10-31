@@ -43,4 +43,20 @@ impl Drop for EnvGuard {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_env_guard() {
+        let original = std::env::var("ATHENA_HOME").ok();
+        {
+            let guard = EnvGuard::new();
+            guard.set_home("/tmp/athena-test-guard");
+            assert_eq!(std::env::var("ATHENA_HOME").unwrap(), "/tmp/athena-test-guard");
+        }
+        assert_eq!(std::env::var("ATHENA_HOME").ok(), original);
+    }
+}
+
 // Rust guideline compliant 2026-02-21

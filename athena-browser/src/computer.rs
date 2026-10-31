@@ -71,4 +71,15 @@ impl ComputerUse {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_computer_use_init() {
+        let cu = ComputerUse::default();
+        assert!(cu.enigo.lock().is_ok());
+    }
+}
+
 // Rust guideline compliant 2026-02-21

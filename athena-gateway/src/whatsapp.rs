@@ -58,7 +58,6 @@ mod tests {
     use super::*;
     use axum::extract::{State, Json};
     use axum::response::IntoResponse;
-    use serde_json::json;
     use std::sync::Arc;
     use athena_tools::ToolRegistry;
 

@@ -65,4 +65,51 @@ impl AgentSkillsHub {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_agentskills_export_and_import() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path1 = temp_dir.path().join("skills1.db");
+        let db_path2 = temp_dir.path().join("skills2.db");
+        let export_path = temp_dir.path().join("exported.json");
+
+        let store1 = SkillStore::new(&db_path1).unwrap();
+        let manager1 = SkillManager::new(&db_path1).unwrap();
+
+        let skill = Skill {
+            id: "s-1".to_string(),
+            name: "Rust Testing Skill".to_string(),
+            description: "Teaches how to write rust unit tests".to_string(),
+            instructions: "Use #[test] and assert!".to_string(),
+            usage_count: 3,
+            success_count: 3,
+            created_at: 100,
+            updated_at: 100,
+        };
+        let embedding = manager1.embed_text(&skill.description).unwrap();
+        store1.insert_skill(&skill, &embedding).unwrap();
+
+        // Test export
+        AgentSkillsHub::export_skills(&store1, &export_path).unwrap();
+        assert!(export_path.exists());
+
+        let content = fs::read_to_string(&export_path).unwrap();
+        assert!(content.contains("Rust Testing Skill"));
+
+        // Test import
+        let store2 = SkillStore::new(&db_path2).unwrap();
+        let manager2 = SkillManager::new(&db_path2).unwrap();
+        let imported_count = AgentSkillsHub::import_skills(&store2, &manager2, &export_path).unwrap();
+        assert_eq!(imported_count, 1);
+
+        let skills2 = store2.get_all_skills().unwrap();
+        assert_eq!(skills2.len(), 1);
+        assert_eq!(skills2[0].name, "Rust Testing Skill");
+        assert_eq!(skills2[0].instructions, "Use #[test] and assert!");
+    }
+}
+
 // Rust guideline compliant 2026-02-21

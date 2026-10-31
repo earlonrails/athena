@@ -75,4 +75,40 @@ impl Tool for KanbanMoveTaskTool {
 inventory::submit!(crate::registry::RegisteredTool { factory: || std::sync::Arc::new(KanbanCreateTaskTool) });
 inventory::submit!(crate::registry::RegisteredTool { factory: || std::sync::Arc::new(KanbanMoveTaskTool) });
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_kanban_create_and_move_tools() {
+        let guard = athena_core::test_utils::EnvGuard::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        guard.set_home(temp_dir.path());
+
+        let create_tool = KanbanCreateTaskTool;
+        assert_eq!(create_tool.name(), "kanban_create");
+        assert_eq!(create_tool.toolset(), "kanban");
+        assert!(create_tool.schema().get("parameters").is_some());
+
+        let res = create_tool.handle(json!({
+            "title": "Build Autonomous Tests",
+            "assignee": "athena"
+        })).await.unwrap();
+
+        assert_eq!(res["status"], "success");
+        let task_id = res["task_id"].as_str().expect("task_id returned");
+
+        let move_tool = KanbanMoveTaskTool;
+        assert_eq!(move_tool.name(), "kanban_move");
+        assert_eq!(move_tool.toolset(), "kanban");
+
+        let move_res = move_tool.handle(json!({
+            "task_id": task_id,
+            "column": "col-in-progress"
+        })).await.unwrap();
+
+        assert_eq!(move_res["status"], "success");
+    }
+}
+
 // Rust guideline compliant 2026-02-21

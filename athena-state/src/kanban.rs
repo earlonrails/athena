@@ -32,8 +32,22 @@ pub struct KanbanDB {
 impl KanbanDB {
     pub fn new() -> Result<Self> {
         let db_path = get_athena_home().join("kanban.db");
-        let conn = Connection::open(db_path)?;
-        
+        Self::open(db_path)
+    }
+
+    pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
+        let conn = Connection::open(path)?;
+        Self::init_tables(&conn)?;
+        Ok(Self { conn })
+    }
+
+    pub fn open_in_memory() -> Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        Self::init_tables(&conn)?;
+        Ok(Self { conn })
+    }
+
+    fn init_tables(conn: &Connection) -> Result<()> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS kanban_boards (
                 id TEXT PRIMARY KEY,
@@ -66,7 +80,7 @@ impl KanbanDB {
             [],
         )?;
         
-        Ok(Self { conn })
+        Ok(())
     }
 
     pub fn init_default_board(&self) -> Result<()> {
@@ -146,6 +160,60 @@ impl KanbanDB {
             params![assignee, card_id],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kanban_in_memory_crud() {
+        let db = KanbanDB::open_in_memory().expect("in-memory db failed");
+        db.init_default_board().expect("failed init default board");
+
+        // Should have default board and 3 columns
+        let cards = db.get_cards("default").expect("failed to get cards");
+        assert_eq!(cards.len(), 0);
+
+        // Create card
+        db.create_card("c1", "default", "col-todo", "Write Rust tests", Some("kevin"))
+            .expect("failed create card");
+
+        let cards = db.get_cards("default").expect("failed get cards");
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].id, "c1");
+        assert_eq!(cards[0].column_id, "col-todo");
+        assert_eq!(cards[0].title, "Write Rust tests");
+        assert_eq!(cards[0].assignee.as_deref(), Some("kevin"));
+
+        // Move card
+        db.move_card("c1", "col-in-progress").expect("failed to move card");
+        let cards = db.get_cards("default").unwrap();
+        assert_eq!(cards[0].column_id, "col-in-progress");
+
+        // Assign card
+        db.assign_card("c1", "athena-agent").expect("failed to assign card");
+        let cards = db.get_cards("default").unwrap();
+        assert_eq!(cards[0].assignee.as_deref(), Some("athena-agent"));
+
+        // Delete card
+        db.delete_card("c1").expect("failed to delete card");
+        let cards = db.get_cards("default").unwrap();
+        assert_eq!(cards.len(), 0);
+    }
+
+    #[test]
+    fn test_kanban_custom_board_and_column() {
+        let db = KanbanDB::open_in_memory().expect("in-memory db failed");
+        db.create_board("b-sprint", "Sprint 42").unwrap();
+        db.create_column("col-backlog", "b-sprint", "Backlog", 0).unwrap();
+        db.create_card("task-1", "b-sprint", "col-backlog", "Sprint planning", None).unwrap();
+
+        let cards = db.get_cards("b-sprint").unwrap();
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].title, "Sprint planning");
+        assert_eq!(cards[0].assignee, None);
     }
 }
 

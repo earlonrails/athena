@@ -621,7 +621,7 @@ pub fn register() {
 mod tests {
     use super::*;
     use wiremock::{MockServer, Mock, ResponseTemplate};
-    use wiremock::matchers::{method, path, header};
+    use wiremock::matchers::{method, path};
 
     #[tokio::test]
     async fn test_anthropic_profile() {
