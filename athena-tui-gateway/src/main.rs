@@ -1,6 +1,6 @@
 use athena_agent::{AIAgent, AgentEvent};
 use athena_tools::ToolRegistry;
-use futures::{SinkExt, StreamExt};
+use futures::SinkExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;

@@ -207,68 +207,127 @@ impl AIAgent {
                 base_url_override: self.config.base_url.clone(),
             };
 
-            let mut stream_res = match provider.create_chat_completion_stream(request).await {
-                Ok(resp) => resp.response,
-                Err(e) => {
-                    let _ = tx.send(crate::events::AgentEvent::Error(format!("API Error: {}", e)));
-                    return Err(format!("API Error: {}", e));
-                }
-            };
-
             use futures::StreamExt;
             let mut final_content = String::new();
             let mut tool_calls_map: std::collections::BTreeMap<usize, ProviderToolCall> = std::collections::BTreeMap::new();
+            let mut stream_attempts = 0;
+            const MAX_RETRIES: usize = 3;
+            let mut stream_succeeded = false;
+            let mut last_error = String::new();
+            let mut current_model = self.config.model.clone();
 
-            while let Some(chunk_res) = stream_res.next().await {
-                let chunk = match chunk_res {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(crate::events::AgentEvent::Error(e.to_string()));
-                        return Err(format!("Stream Error: {}", e));
-                    }
-                };
-                
-                if let Some(usage) = &chunk.usage {
-                    let read = usage.cache_read_input_tokens.unwrap_or(0);
-                    let creation = usage.cache_creation_input_tokens.unwrap_or(0);
-                    if read > 0 || creation > 0 {
-                        let _ = tx.send(crate::events::AgentEvent::TokenUsage {
-                            cache_read: read,
-                            cache_creation: creation,
-                        });
-                    }
-                }
-                
-                if let Some(delta) = chunk.choices.first().map(|c| &c.delta) {
-                    if let Some(content) = &delta.content {
-                        final_content.push_str(content);
-                        let _ = tx.send(crate::events::AgentEvent::TokenDelta(content.clone()));
-                    }
-                    if let Some(tcs) = &delta.tool_calls {
-                        for tc in tcs {
-                            let idx = tc.index.unwrap_or(0) as usize;
-                            let entry = tool_calls_map.entry(idx).or_insert_with(|| ProviderToolCall {
-                                id: String::new(),
-                                r#type: "function".to_string(),
-                                function: ProviderToolFunction {
-                                    name: String::new(),
-                                    arguments: String::new(),
+            while stream_attempts < MAX_RETRIES && !stream_succeeded {
+                stream_attempts += 1;
+                final_content.clear();
+                tool_calls_map.clear();
+
+                let mut req = request.clone();
+                req.model = current_model.clone();
+
+                match provider.create_chat_completion_stream(req).await {
+                    Ok(resp) => {
+                        let mut stream_res = resp.response;
+                        let mut stream_failed_midway = false;
+
+                        while let Some(chunk_res) = stream_res.next().await {
+                            let chunk = match chunk_res {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    last_error = e.to_string();
+                                    stream_failed_midway = true;
+                                    break;
                                 }
-                            });
-                            if let Some(id) = &tc.id {
-                                entry.id.push_str(id);
+                            };
+
+                            if let Some(usage) = &chunk.usage {
+                                let read = usage.cache_read_input_tokens.unwrap_or(0);
+                                let creation = usage.cache_creation_input_tokens.unwrap_or(0);
+                                if read > 0 || creation > 0 {
+                                    let _ = tx.send(crate::events::AgentEvent::TokenUsage {
+                                        cache_read: read,
+                                        cache_creation: creation,
+                                    });
+                                }
                             }
-                            if let Some(f) = &tc.function {
-                                if let Some(name) = &f.name {
-                                    entry.function.name.push_str(name);
+
+                            if let Some(delta) = chunk.choices.first().map(|c| &c.delta) {
+                                if let Some(content) = &delta.content {
+                                    final_content.push_str(content);
+                                    let _ = tx.send(crate::events::AgentEvent::TokenDelta(content.clone()));
                                 }
-                                if let Some(args) = &f.arguments {
-                                    entry.function.arguments.push_str(args);
+                                if let Some(tcs) = &delta.tool_calls {
+                                    for tc in tcs {
+                                        let idx = tc.index.unwrap_or(0) as usize;
+                                        let entry = tool_calls_map.entry(idx).or_insert_with(|| ProviderToolCall {
+                                            id: String::new(),
+                                            r#type: "function".to_string(),
+                                            function: ProviderToolFunction {
+                                                name: String::new(),
+                                                arguments: String::new(),
+                                            }
+                                        });
+                                        if let Some(id) = &tc.id {
+                                            entry.id.push_str(id);
+                                        }
+                                        if let Some(f) = &tc.function {
+                                            if let Some(name) = &f.name {
+                                                entry.function.name.push_str(name);
+                                            }
+                                            if let Some(args) = &f.arguments {
+                                                entry.function.arguments.push_str(args);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
+
+                        if !stream_failed_midway {
+                            stream_succeeded = true;
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        last_error = e.to_string();
                     }
                 }
+
+                if !stream_succeeded && stream_attempts < MAX_RETRIES {
+                    let is_transient = last_error.contains("503")
+                        || last_error.contains("429")
+                        || last_error.contains("502")
+                        || last_error.contains("504")
+                        || last_error.contains("Service Unavailable")
+                        || last_error.contains("high demand");
+
+                    if is_transient {
+                        tracing::warn!(
+                            "Streaming request for model '{}' failed with transient error: {}. Retrying...",
+                            current_model,
+                            last_error
+                        );
+                        if stream_attempts >= 2 {
+                            if let Some(fallback) = provider.profile().fallback_models.first() {
+                                if current_model != *fallback {
+                                    tracing::warn!(
+                                        "Switching from '{}' to fallback model '{}' due to service unavailability.",
+                                        current_model,
+                                        fallback
+                                    );
+                                    current_model = fallback.clone();
+                                }
+                            }
+                        }
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500 * stream_attempts as u64)).await;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            if !stream_succeeded {
+                let _ = tx.send(crate::events::AgentEvent::Error(last_error.clone()));
+                return Err(format!("Stream Error: {}", last_error));
             }
 
             let mut our_tool_calls = Vec::new();
@@ -512,7 +571,6 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
     use athena_tools::ToolRegistry;
-    use serde_json::json;
 
     #[test]
     fn test_builder() {

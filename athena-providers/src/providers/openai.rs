@@ -80,12 +80,9 @@ impl OpenAIProvider {
         let mut config = OpenAIConfig::new();
         
         let mut resolved_key = api_key.clone();
-        println!("DEBUG: new_with_profile called with api_key={:?}, base_url={:?}", api_key, base_url);
-        println!("DEBUG: profile.env_vars={:?}", profile.env_vars);
         if resolved_key.is_none() {
             for env_var in &profile.env_vars {
                 if let Some(val) = athena_core::config::get_env_value(env_var) {
-                    println!("DEBUG: Found env var {}={}", env_var, val);
                     resolved_key = Some(val);
                     break;
                 }
@@ -93,11 +90,9 @@ impl OpenAIProvider {
         }
         
         if let Some(key) = resolved_key {
-            println!("DEBUG: setting config api_key to {:?}", key);
             config = config.with_api_key(key);
         }
         if let Some(url) = base_url {
-            println!("DEBUG: setting config base_url to {:?}", url);
             config = config.with_api_base(url);
         }
         
