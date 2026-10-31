@@ -32,6 +32,7 @@ pub mod acp;
 pub mod pairing;
 pub mod insights;
 pub mod claw;
+pub mod hermes;
 pub mod fallback;
 pub mod lsp;
 pub mod curator;

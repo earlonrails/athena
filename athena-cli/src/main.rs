@@ -188,6 +188,18 @@ enum Commands {
     /// Show usage insights and analytics
     Insights,
 
+    /// Migrate configuration and scheduled crons from Hermes Agent
+    #[command(alias = "migrate")]
+    Hermes {
+        /// Source Hermes installation directory (defaults to ~/.hermes or $HERMES_HOME)
+        #[arg(long)]
+        source: Option<std::path::PathBuf>,
+
+        /// Force overwrite of existing configuration files
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
+
     /// OpenClaw migration tools
     Claw,
 
@@ -623,6 +635,11 @@ pub(crate) async fn execute_command(args: Args, config: athena_core::config::Ath
         }
         Some(Commands::Insights) => {
             commands::insights::run_insights();
+        }
+        Some(Commands::Hermes { source, force }) => {
+            if let Err(e) = commands::hermes::run_hermes(source.clone(), *force) {
+                eprintln!("Error during Hermes migration: {}", e);
+            }
         }
         Some(Commands::Claw) => {
             commands::claw::run_claw();
