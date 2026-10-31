@@ -15,12 +15,14 @@ pub fn gemini_profile() -> ProviderProfile {
         display_name: "Google Gemini".to_string(),
         description: "Google Gemini via OpenAI compatibility layer".to_string(),
         signup_url: "https://aistudio.google.com/app/apikey".to_string(),
-        env_vars: vec!["GEMINI_API_KEY".to_string()],
+        env_vars: vec!["GEMINI_API_KEY".to_string(), "GOOGLE_API_KEY".to_string()],
         base_url: "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
         models_url: "https://generativelanguage.googleapis.com/v1beta/openai/models".to_string(),
         auth_type: AuthType::ApiKey,
         supports_health_check: true,
         fallback_models: vec![
+            "gemini-2.5-flash".to_string(),
+            "gemini-2.5-pro".to_string(),
             "gemini-1.5-pro".to_string(),
             "gemini-1.5-flash".to_string(),
         ],
@@ -104,9 +106,22 @@ impl LLMProvider for GeminiProvider {
         &self,
         request: ChatCompletionRequest,
     ) -> std::result::Result<ChatCompletionResponse, ProviderError> {
+        let base_url = match request.base_url_override.clone() {
+            Some(mut url) => {
+                if url.contains("generativelanguage.googleapis.com") && !url.ends_with("/openai") {
+                    if !url.ends_with('/') {
+                        url.push('/');
+                    }
+                    url.push_str("openai");
+                }
+                Some(url)
+            }
+            None => Some(self.profile.base_url.clone()),
+        };
+
         let openai_provider = super::openai::OpenAIProvider::new_with_profile(
             request.api_key_override.clone(),
-            request.base_url_override.clone().or_else(|| Some(self.profile.base_url.clone())),
+            base_url,
             self.profile.clone(),
         );
         
@@ -117,9 +132,22 @@ impl LLMProvider for GeminiProvider {
         &self,
         request: ChatCompletionRequest,
     ) -> std::result::Result<ChatCompletionStream, ProviderError> {
+        let base_url = match request.base_url_override.clone() {
+            Some(mut url) => {
+                if url.contains("generativelanguage.googleapis.com") && !url.ends_with("/openai") {
+                    if !url.ends_with('/') {
+                        url.push('/');
+                    }
+                    url.push_str("openai");
+                }
+                Some(url)
+            }
+            None => Some(self.profile.base_url.clone()),
+        };
+
         let openai_provider = super::openai::OpenAIProvider::new_with_profile(
             request.api_key_override.clone(),
-            request.base_url_override.clone().or_else(|| Some(self.profile.base_url.clone())),
+            base_url,
             self.profile.clone(),
         );
         

@@ -204,47 +204,65 @@ pub fn merge_env_files(hermes_env: &Path, athena_env: &Path) -> Result<usize> {
         .with_context(|| format!("Failed to read {}", hermes_env.display()))?;
     let mut added_count = 0;
 
-    if !athena_env.exists() {
-        fs::write(athena_env, &hermes_content)?;
-        let count = hermes_content
-            .lines()
-            .filter(|l| {
-                let trimmed = l.trim();
-                !trimmed.is_empty() && !trimmed.starts_with('#') && trimmed.contains('=')
-            })
-            .count();
-        return Ok(count);
-    }
-
-    let existing_content = fs::read_to_string(athena_env)?;
     let mut existing_keys = HashSet::new();
-    for line in existing_content.lines() {
-        let trimmed = line.trim();
-        if !trimmed.is_empty() && !trimmed.starts_with('#') {
-            if let Some((k, _)) = trimmed.split_once('=') {
-                existing_keys.insert(k.trim().to_string());
+    let existing_content = if athena_env.exists() {
+        let content = fs::read_to_string(athena_env)?;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                if let Some((k, _)) = trimmed.split_once('=') {
+                    existing_keys.insert(k.trim().to_string());
+                }
             }
         }
-    }
+        content
+    } else {
+        String::new()
+    };
 
     let mut to_append = String::new();
+    let mut google_key_val = None;
+    let mut gemini_key_val = None;
+
     for line in hermes_content.lines() {
         let trimmed = line.trim();
         if !trimmed.is_empty() && !trimmed.starts_with('#') {
-            if let Some((k, _)) = trimmed.split_once('=') {
-                if !existing_keys.contains(k.trim()) {
+            if let Some((k, v)) = trimmed.split_once('=') {
+                let k_trim = k.trim();
+                let v_trim = v.trim();
+                if k_trim == "GOOGLE_API_KEY" && !v_trim.is_empty() {
+                    google_key_val = Some(v_trim.to_string());
+                } else if k_trim == "GEMINI_API_KEY" && !v_trim.is_empty() {
+                    gemini_key_val = Some(v_trim.to_string());
+                }
+                if !existing_keys.contains(k_trim) {
                     to_append.push_str(line);
                     to_append.push('\n');
-                    existing_keys.insert(k.trim().to_string());
+                    existing_keys.insert(k_trim.to_string());
                     added_count += 1;
                 }
             }
         }
     }
 
+    // Alias GEMINI_API_KEY <-> GOOGLE_API_KEY if one exists and the other doesn't
+    if let Some(val) = google_key_val {
+        if !existing_keys.contains("GEMINI_API_KEY") {
+            to_append.push_str(&format!("GEMINI_API_KEY={}\n", val));
+            existing_keys.insert("GEMINI_API_KEY".to_string());
+            added_count += 1;
+        }
+    } else if let Some(val) = gemini_key_val {
+        if !existing_keys.contains("GOOGLE_API_KEY") {
+            to_append.push_str(&format!("GOOGLE_API_KEY={}\n", val));
+            existing_keys.insert("GOOGLE_API_KEY".to_string());
+            added_count += 1;
+        }
+    }
+
     if !to_append.is_empty() {
         let mut final_content = existing_content;
-        if !final_content.ends_with('\n') {
+        if !final_content.is_empty() && !final_content.ends_with('\n') {
             final_content.push('\n');
         }
         final_content.push_str(&to_append);
@@ -254,26 +272,229 @@ pub fn merge_env_files(hermes_env: &Path, athena_env: &Path) -> Result<usize> {
     Ok(added_count)
 }
 
-/// Recursively copy directory contents.
+/// Recursively copy directory contents, preserving symlinks and handling nested directory symlinks.
 pub fn copy_dir_all(src: &Path, dst: &Path, force: bool) -> io::Result<usize> {
     let mut copied = 0;
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
         let from = entry.path();
         let to = dst.join(entry.file_name());
 
-        if ty.is_dir() {
-            copied += copy_dir_all(&from, &to, force)?;
+        let is_symlink = entry.file_type().map(|t| t.is_symlink()).unwrap_or(false);
+        if is_symlink {
+            #[cfg(unix)]
+            {
+                if force && (to.exists() || to.is_symlink()) {
+                    let _ = fs::remove_file(&to);
+                    let _ = fs::remove_dir_all(&to);
+                }
+                if !to.exists() && !to.is_symlink() {
+                    if let Ok(target) = fs::read_link(&from) {
+                        if std::os::unix::fs::symlink(&target, &to).is_ok() {
+                            copied += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+            // If symlink points to directory and could not be symlinked, copy dir contents
+            if from.is_dir() {
+                copied += copy_dir_all(&from, &to, force).unwrap_or(0);
+            } else if (force || !to.exists()) && fs::copy(&from, &to).is_ok() {
+                copied += 1;
+            }
+        } else if from.is_dir() {
+            copied += copy_dir_all(&from, &to, force).unwrap_or(0);
         } else {
             if force || !to.exists() {
-                fs::copy(&from, &to)?;
-                copied += 1;
+                if fs::copy(&from, &to).is_ok() {
+                    copied += 1;
+                }
             }
         }
     }
     Ok(copied)
+}
+
+/// Parse and merge Hermes YAML into AthenaConfig, handling both modern Athena format
+/// and legacy Hermes Agent format (e.g. object-based fallback_providers, api instead of base_url, etc.)
+pub fn merge_hermes_yaml(hermes_yaml: &str, athena_config: &mut AthenaConfig, force: bool) -> Result<bool> {
+    // 1. Try standard AthenaConfig deserialization first
+    if let Ok(hermes_cfg) = serde_yaml::from_str::<AthenaConfig>(hermes_yaml) {
+        if !hermes_cfg.model.default.is_empty() && (athena_config.model.default.is_empty() || force) {
+            athena_config.model = hermes_cfg.model;
+        }
+        for (name, prov) in hermes_cfg.providers {
+            if force || !athena_config.providers.contains_key(&name) {
+                athena_config.providers.insert(name, prov);
+            }
+        }
+        for fb in hermes_cfg.fallback_providers {
+            if !athena_config.fallback_providers.contains(&fb) {
+                athena_config.fallback_providers.push(fb);
+            }
+        }
+        if hermes_cfg.agent.system_prompt.is_some() && (athena_config.agent.system_prompt.is_none() || force) {
+            athena_config.agent.system_prompt = hermes_cfg.agent.system_prompt;
+        }
+        if hermes_cfg.agent.yolo_mode {
+            athena_config.agent.yolo_mode = true;
+        }
+        if hermes_cfg.gateway.telegram_enabled {
+            athena_config.gateway.telegram_enabled = true;
+        }
+        if hermes_cfg.gateway.discord_enabled {
+            athena_config.gateway.discord_enabled = true;
+        }
+        for job in hermes_cfg.cron_jobs {
+            if !athena_config.cron_jobs.contains(&job) {
+                athena_config.cron_jobs.push(job);
+            }
+        }
+        return Ok(true);
+    }
+
+    // 2. Flexible legacy Hermes Agent format
+    let root: serde_yaml::Value = serde_yaml::from_str(hermes_yaml)
+        .with_context(|| "Failed to parse YAML structure")?;
+
+    let mut changed = false;
+
+    // Model
+    if let Some(model_val) = root.get("model") {
+        if let Some(def) = model_val.get("default").and_then(|v| v.as_str()) {
+            if !def.is_empty() && (athena_config.model.default.is_empty() || force) {
+                athena_config.model.default = def.to_string();
+                changed = true;
+            }
+        }
+        if let Some(prov) = model_val.get("provider").and_then(|v| v.as_str()) {
+            if !prov.is_empty() && (athena_config.model.provider.is_empty() || force) {
+                athena_config.model.provider = prov.to_string();
+                changed = true;
+            }
+        }
+        if let Some(base_url) = model_val.get("base_url").and_then(|v| v.as_str()) {
+            let prov_name = if !athena_config.model.provider.is_empty() {
+                athena_config.model.provider.clone()
+            } else {
+                "default".to_string()
+            };
+            if force || !athena_config.providers.contains_key(&prov_name) {
+                athena_config.providers.insert(prov_name.clone(), athena_core::config::ProviderConfig {
+                    name: prov_name,
+                    base_url: Some(base_url.to_string()),
+                    default_model: Some(athena_config.model.default.clone()),
+                    api_key: None,
+                });
+                changed = true;
+            }
+        }
+    }
+
+    // Providers
+    if let Some(providers_val) = root.get("providers").and_then(|v| v.as_mapping()) {
+        for (k, v) in providers_val {
+            if let Some(name) = k.as_str() {
+                if force || !athena_config.providers.contains_key(name) {
+                    let base_url = v.get("base_url")
+                        .or_else(|| v.get("api"))
+                        .and_then(|s| s.as_str())
+                        .map(String::from);
+                    let default_model = v.get("default_model")
+                        .and_then(|s| s.as_str())
+                        .map(String::from);
+                    let api_key = v.get("api_key")
+                        .and_then(|s| s.as_str())
+                        .map(String::from);
+                    athena_config.providers.insert(name.to_string(), athena_core::config::ProviderConfig {
+                        name: name.to_string(),
+                        base_url,
+                        default_model,
+                        api_key,
+                    });
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    // Fallback providers (handles list of strings or list of objects e.g. [{provider: "...", model: "..."}])
+    if let Some(fallbacks_val) = root.get("fallback_providers").and_then(|v| v.as_sequence()) {
+        for item in fallbacks_val {
+            let prov_name = if let Some(s) = item.as_str() {
+                Some(s.to_string())
+            } else if let Some(map) = item.as_mapping() {
+                map.get(&serde_yaml::Value::String("provider".to_string()))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            };
+            if let Some(name) = prov_name {
+                if !athena_config.fallback_providers.contains(&name) {
+                    athena_config.fallback_providers.push(name);
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    // Agent
+    if let Some(agent_val) = root.get("agent") {
+        if let Some(prompt) = agent_val.get("system_prompt").and_then(|v| v.as_str()) {
+            if athena_config.agent.system_prompt.is_none() || force {
+                athena_config.agent.system_prompt = Some(prompt.to_string());
+                changed = true;
+            }
+        }
+        if let Some(yolo) = agent_val.get("yolo_mode").and_then(|v| v.as_bool()) {
+            if yolo {
+                athena_config.agent.yolo_mode = true;
+                changed = true;
+            }
+        }
+        if let Some(turns) = agent_val.get("max_iterations")
+            .or_else(|| agent_val.get("max_turns"))
+            .and_then(|v| v.as_u64()) {
+            if force || athena_config.agent.max_iterations == 20 {
+                athena_config.agent.max_iterations = turns as u32;
+                changed = true;
+            }
+        }
+    }
+
+    // Terminal
+    if let Some(term_val) = root.get("terminal") {
+        if let Some(backend) = term_val.get("backend").and_then(|v| v.as_str()) {
+            if force || athena_config.terminal_backend == "local" {
+                athena_config.terminal_backend = backend.to_string();
+                changed = true;
+            }
+        }
+    }
+
+    // Gateway
+    if let Some(gw_val) = root.get("gateway") {
+        if let Some(tg) = gw_val.get("telegram_enabled").and_then(|v| v.as_bool()) {
+            if tg {
+                athena_config.gateway.telegram_enabled = true;
+                changed = true;
+            }
+        }
+        if let Some(dc) = gw_val.get("discord_enabled").and_then(|v| v.as_bool()) {
+            if dc {
+                athena_config.gateway.discord_enabled = true;
+                changed = true;
+            }
+        }
+    }
+
+    Ok(changed)
 }
 
 /// Core migration runner: copies configuration and crons from Hermes to Athena.
@@ -316,59 +537,20 @@ pub fn run_hermes(explicit_source: Option<PathBuf>, force: bool) -> Result<()> {
     if hermes_config_path.exists() {
         match fs::read_to_string(&hermes_config_path) {
             Ok(hermes_yaml) => {
-                if let Ok(hermes_cfg) = serde_yaml::from_str::<AthenaConfig>(&hermes_yaml) {
-                    // Backup existing athena config if present
-                    if athena_config_path.exists() {
-                        let bak_path = athena_home.join("config.yaml.bak");
-                        let _ = fs::copy(&athena_config_path, &bak_path);
-                    }
+                // Backup existing athena config if present
+                if athena_config_path.exists() {
+                    let bak_path = athena_home.join("config.yaml.bak");
+                    let _ = fs::copy(&athena_config_path, &bak_path);
+                }
 
-                    // Model preferences
-                    if !hermes_cfg.model.default.is_empty() && (athena_config.model.default.is_empty() || force) {
-                        athena_config.model = hermes_cfg.model;
+                match merge_hermes_yaml(&hermes_yaml, &mut athena_config, force) {
+                    Ok(changed) => {
+                        config_migrated = changed;
+                        println!("✓ config.yaml: Merged model, provider, and agent settings.");
                     }
-
-                    // Providers
-                    for (name, prov) in hermes_cfg.providers {
-                        if force || !athena_config.providers.contains_key(&name) {
-                            athena_config.providers.insert(name, prov);
-                        }
+                    Err(e) => {
+                        println!("⚠ config.yaml: Could not parse legacy YAML format ({}), skipped.", e);
                     }
-
-                    // Fallback providers
-                    for fb in hermes_cfg.fallback_providers {
-                        if !athena_config.fallback_providers.contains(&fb) {
-                            athena_config.fallback_providers.push(fb);
-                        }
-                    }
-
-                    // Agent settings
-                    if hermes_cfg.agent.system_prompt.is_some() && (athena_config.agent.system_prompt.is_none() || force) {
-                        athena_config.agent.system_prompt = hermes_cfg.agent.system_prompt;
-                    }
-                    if hermes_cfg.agent.yolo_mode {
-                        athena_config.agent.yolo_mode = true;
-                    }
-
-                    // Gateway flags
-                    if hermes_cfg.gateway.telegram_enabled {
-                        athena_config.gateway.telegram_enabled = true;
-                    }
-                    if hermes_cfg.gateway.discord_enabled {
-                        athena_config.gateway.discord_enabled = true;
-                    }
-
-                    // Crons inside config.yaml
-                    for job in hermes_cfg.cron_jobs {
-                        if !athena_config.cron_jobs.contains(&job) {
-                            athena_config.cron_jobs.push(job);
-                        }
-                    }
-
-                    config_migrated = true;
-                    println!("✓ config.yaml: Merged model, provider, and agent settings.");
-                } else {
-                    println!("⚠ config.yaml: Could not parse legacy YAML format, skipped.");
                 }
             }
             Err(e) => {
@@ -749,6 +931,77 @@ gateway:
         // Database and logs were NOT copied
         assert!(!athena_dir.join("state.db").exists());
         assert!(!athena_dir.join("logs").exists());
+    }
+
+    #[test]
+    fn test_merge_legacy_hermes_yaml() {
+        let legacy_yaml = r#"
+model:
+  default: gemini-3.6-flash
+  provider: gemini
+  base_url: 'https://generativelanguage.googleapis.com/v1beta'
+fallback_providers:
+  - provider: custom:mistral
+    model: mistral-small-latest
+  - provider: openrouter
+    model: google/gemini-3.6-flash
+terminal:
+  backend: local
+agent:
+  max_turns: 90
+  yolo_mode: true
+gateway:
+  telegram_enabled: true
+"#;
+        let mut cfg = AthenaConfig::default();
+        let res = merge_hermes_yaml(legacy_yaml, &mut cfg, false);
+        assert!(res.is_ok());
+        assert!(res.unwrap());
+        assert_eq!(cfg.model.default, "gemini-3.6-flash");
+        assert_eq!(cfg.model.provider, "gemini");
+        assert_eq!(cfg.agent.max_iterations, 90);
+        assert!(cfg.agent.yolo_mode);
+        assert!(cfg.gateway.telegram_enabled);
+        assert!(cfg.fallback_providers.contains(&"custom:mistral".to_string()));
+        assert!(cfg.fallback_providers.contains(&"openrouter".to_string()));
+    }
+
+    #[test]
+    fn test_merge_env_files_google_gemini_aliasing() {
+        let temp = TempDir::new().unwrap();
+        let hermes_env = temp.path().join("hermes.env");
+        let athena_env = temp.path().join("athena.env");
+
+        fs::write(&hermes_env, "GOOGLE_API_KEY=AIzaSyTest123\nOTHER_VAR=abc\n").unwrap();
+        let added = merge_env_files(&hermes_env, &athena_env).unwrap();
+        assert_eq!(added, 3); // GOOGLE_API_KEY, OTHER_VAR, and GEMINI_API_KEY alias
+
+        let content = fs::read_to_string(&athena_env).unwrap();
+        assert!(content.contains("GOOGLE_API_KEY=AIzaSyTest123"));
+        assert!(content.contains("GEMINI_API_KEY=AIzaSyTest123"));
+        assert!(content.contains("OTHER_VAR=abc"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_copy_dir_all_with_symlinks() {
+        let temp = TempDir::new().unwrap();
+        let src = temp.path().join("src");
+        let dst = temp.path().join("dst");
+        let external_target = temp.path().join("external");
+
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&external_target).unwrap();
+        fs::write(external_target.join("SKILL.md"), "# External Skill").unwrap();
+
+        // Create symlink inside src pointing to external_target directory
+        std::os::unix::fs::symlink(&external_target, src.join("linked-skill")).unwrap();
+        fs::write(src.join("regular.txt"), "hello").unwrap();
+
+        let count = copy_dir_all(&src, &dst, false).unwrap();
+        assert!(count >= 2);
+        assert!(dst.join("regular.txt").exists());
+        assert!(dst.join("linked-skill").exists());
     }
 }
 
