@@ -134,8 +134,9 @@ mod tests {
             .await;
 
         // Override ATHENA_HOME to a temporary directory
+        let guard = athena_core::test_utils::EnvGuard::new();
         let temp_dir = tempfile::tempdir().unwrap();
-        std::env::set_var("ATHENA_HOME", temp_dir.path());
+        guard.set_home(temp_dir.path());
         
         let provider = Arc::new(OpenAIProvider::new(Some("test-key".to_string()), Some(mock_server.uri())));
 

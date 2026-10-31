@@ -274,9 +274,10 @@ mod tests {
 
     #[test]
     fn test_session_db_default_path() {
+        let guard = athena_core::test_utils::EnvGuard::new();
         // We ensure it falls back gracefully when None is passed
         let temp_dir = TempDir::new().unwrap();
-        std::env::set_var("ATHENA_HOME", temp_dir.path());
+        guard.set_home(temp_dir.path());
 
         let db = SessionDB::new(None);
         assert!(db.is_ok());

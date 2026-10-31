@@ -643,13 +643,14 @@ mod tests {
 
     #[test]
     fn test_end_to_end_hermes_migration() {
+        let guard = athena_core::test_utils::EnvGuard::new();
         let temp = TempDir::new().unwrap();
         let hermes_dir = temp.path().join(".hermes");
         let athena_dir = temp.path().join(".athena");
         fs::create_dir_all(&hermes_dir).unwrap();
         fs::create_dir_all(&athena_dir).unwrap();
 
-        std::env::set_var("ATHENA_HOME", &athena_dir);
+        guard.set_home(&athena_dir);
 
         // 1. Setup Hermes config.yaml
         let hermes_config = r#"

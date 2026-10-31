@@ -402,6 +402,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_websocket_bridge_roundtrip() {
+        let guard = athena_core::test_utils::EnvGuard::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        guard.set_home(temp_dir.path());
+
         let registry = Arc::new(ToolRegistry::new());
         let provider = Arc::new(DummyProvider { profile: ProviderProfile::new("dummy") });
         let state = AppState { registry, provider };

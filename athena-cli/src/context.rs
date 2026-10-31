@@ -86,15 +86,17 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
     use std::fs;
+    use athena_core::test_utils::EnvGuard;
 
     #[test]
     fn test_agents_md_discovery() {
+        let guard = EnvGuard::new();
         let temp_dir = TempDir::new().unwrap();
         
         // Setup mock ~/.athena
         let athena_home = temp_dir.path().join(".athena");
         fs::create_dir_all(&athena_home).unwrap();
-        std::env::set_var("ATHENA_HOME", &athena_home);
+        guard.set_home(&athena_home);
         
         let global_agents_path = athena_home.join("AGENTS.md");
         fs::write(&global_agents_path, "Global Rules").unwrap();
@@ -108,14 +110,10 @@ mod tests {
         fs::write(&workspace_agents_path, "Workspace Rules").unwrap();
 
         // Change current directory to nested
-        let original_dir = env::current_dir().unwrap();
-        env::set_current_dir(&nested).unwrap();
+        guard.set_cwd(&nested);
 
         // Test discovery
         let agents_md = load_agents_md().unwrap();
-        
-        // Restore cwd so we don't break other tests
-        env::set_current_dir(original_dir).unwrap();
 
         assert!(agents_md.contains("Workspace Rules"));
         assert!(agents_md.contains("Global Rules"));
@@ -123,10 +121,11 @@ mod tests {
 
     #[test]
     fn test_memory_injection() {
+        let guard = EnvGuard::new();
         let temp_dir = TempDir::new().unwrap();
         let athena_home = temp_dir.path().join(".athena");
         fs::create_dir_all(&athena_home).unwrap();
-        std::env::set_var("ATHENA_HOME", &athena_home);
+        guard.set_home(&athena_home);
 
         fs::write(athena_home.join("MEMORY.md"), "Memory fact 1").unwrap();
         fs::write(athena_home.join("USER.md"), "User prefers X").unwrap();
