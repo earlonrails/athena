@@ -15,7 +15,7 @@ pub fn xai_profile() -> ProviderProfile {
         display_name: "xAI".to_string(),
         description: "xAI — Grok models".to_string(),
         signup_url: "https://console.x.ai/".to_string(),
-        env_vars: vec!["XAI_API_KEY".to_string()],
+        env_vars: vec!["XAI_API_KEY".to_string(), "GROK_API_KEY".to_string()],
         base_url: "https://api.x.ai/v1".to_string(),
         models_url: "https://api.x.ai/v1/models".to_string(),
         auth_type: AuthType::ApiKey,

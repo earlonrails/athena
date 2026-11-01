@@ -140,6 +140,8 @@ pub fn init_builtin_providers() {
     crate::providers::mistral::register();
     crate::providers::gemini::register();
     crate::providers::xai::register();
+    crate::providers::deepseek::register();
+    crate::providers::groq::register();
 }
 
 /// Macro for easy provider registration

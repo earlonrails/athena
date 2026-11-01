@@ -22,6 +22,10 @@ struct Args {
     #[arg(long, short = 'm')]
     model: Option<String>,
 
+    /// LLM provider to use (e.g. openai, anthropic, openrouter, gemini, mistral, deepseek, groq, xai)
+    #[arg(long, short = 'P')]
+    provider: Option<String>,
+
     /// API key for authentication
     #[arg(long)]
     api_key: Option<String>,
@@ -287,36 +291,68 @@ pub(crate) fn create_agent_builder(config: &athena_core::config::AthenaConfig, a
 
     // Initialize provider registry
     athena_providers::registry::init_builtin_providers();
-    let provider_slug = if config.model.provider.is_empty() { "openai" } else { &config.model.provider };
-    let profile_opt = athena_providers::registry::get_provider_profile(provider_slug);
+
+    // Determine provider slug and model override
+    let (provider_slug, explicit_model) = if let Some(ref p) = args.provider {
+        (p.clone(), args.model.clone())
+    } else if let Some(ref m) = args.model {
+        let parts: Vec<&str> = m.splitn(2, '/').collect();
+        let is_known_provider = parts.len() == 2 && (
+            athena_providers::registry::get_provider_profile(parts[0]).is_some()
+            || config.providers.contains_key(parts[0])
+            || ["openrouter", "openai", "anthropic", "gemini", "google", "mistral", "deepseek", "groq", "xai", "grok"].contains(&parts[0])
+        );
+        if is_known_provider {
+            let p_slug = match parts[0] {
+                "google" => "gemini",
+                "grok" => "xai",
+                other => other,
+            };
+            (p_slug.to_string(), Some(parts[1].to_string()))
+        } else {
+            let slug = if config.model.provider.is_empty() { "openai" } else { &config.model.provider };
+            (slug.to_string(), Some(m.clone()))
+        }
+    } else {
+        let slug = if config.model.provider.is_empty() { "openai" } else { &config.model.provider };
+        (slug.to_string(), None)
+    };
+
+    let profile_opt = athena_providers::registry::get_provider_profile(&provider_slug);
 
     // Set model if provided globally, or from config (if compatible), or fallback to provider default
-    if let Some(model) = &args.model {
-        builder = builder.model(model);
+    let effective_model = if let Some(model) = explicit_model {
+        builder = builder.model(&model);
+        model
     } else if !config.model.default.is_empty() {
         let is_valid_for_provider = profile_opt.as_ref().map_or(true, |p| {
             p.name == "openai" || p.fallback_models.iter().any(|m| m == &config.model.default) || config.model.default.contains(&p.name)
         });
-        if is_valid_for_provider {
-            builder = builder.model(&config.model.default);
+        let chosen = if is_valid_for_provider {
+            config.model.default.clone()
         } else if let Some(ref p) = profile_opt {
             if let Some(fallback) = p.fallback_models.first() {
-                builder = builder.model(fallback);
+                fallback.clone()
             } else {
-                builder = builder.model(&config.model.default);
+                config.model.default.clone()
             }
         } else {
-            builder = builder.model(&config.model.default);
-        }
+            config.model.default.clone()
+        };
+        builder = builder.model(&chosen);
+        chosen
     } else if let Some(ref p) = profile_opt {
-        if let Some(fallback) = p.fallback_models.first() {
-            builder = builder.model(fallback);
+        let chosen = if let Some(fallback) = p.fallback_models.first() {
+            fallback.clone()
         } else {
-            builder = builder.model("gpt-4o");
-        }
+            "gpt-4o".to_string()
+        };
+        builder = builder.model(&chosen);
+        chosen
     } else {
         builder = builder.model("gpt-4o");
-    }
+        "gpt-4o".to_string()
+    };
 
     // Set max iterations if provided globally
     if let Some(max_turns) = args.max_turns {
@@ -325,9 +361,31 @@ pub(crate) fn create_agent_builder(config: &athena_core::config::AthenaConfig, a
         builder = builder.max_iterations(20);
     }
     
-    // Resolve API Key and Base URL using the provider registry
+    // Resolve API Key and Base URL using config overrides, then provider registry
     let mut resolved_api_key = args.api_key.clone();
     let mut resolved_base_url = args.base_url.clone();
+
+    if let Some(p_cfg) = config.providers.get(&provider_slug) {
+        if resolved_base_url.is_none() {
+            if let Some(ref url) = p_cfg.base_url {
+                if !url.is_empty() {
+                    resolved_base_url = Some(url.clone());
+                }
+            }
+        }
+        if resolved_api_key.is_none() {
+            if let Some(ref k) = p_cfg.api_key {
+                if k.starts_with('$') {
+                    let var_name = k.trim_start_matches('$').trim_matches(|c| c == '{' || c == '}');
+                    if let Some(val) = athena_core::config::get_env_value(var_name) {
+                        resolved_api_key = Some(val);
+                    }
+                } else if !k.is_empty() {
+                    resolved_api_key = Some(k.clone());
+                }
+            }
+        }
+    }
     
     if let Some(profile) = profile_opt {
         if resolved_base_url.is_none() {
@@ -344,21 +402,34 @@ pub(crate) fn create_agent_builder(config: &athena_core::config::AthenaConfig, a
         }
     }
 
-    if let Some(k) = resolved_api_key {
+    if let Some(k) = resolved_api_key.as_ref() {
         builder = builder.api_key(k);
     }
 
-    if let Some(url) = resolved_base_url {
+    if let Some(url) = resolved_base_url.as_ref() {
         builder = builder.base_url(url);
     }
 
-    let provider = athena_providers::registry::get_provider(provider_slug)
-        .unwrap_or_else(|| athena_providers::registry::get_provider("openai").unwrap());
+    let provider: std::sync::Arc<dyn athena_providers::LLMProvider + Send + Sync> = if let Some(p) = athena_providers::registry::get_provider(&provider_slug) {
+        p
+    } else if config.providers.contains_key(&provider_slug) {
+        let mut custom_profile = athena_providers::ProviderProfile::new(&provider_slug);
+        if let Some(ref url) = resolved_base_url {
+            custom_profile.base_url = url.clone();
+        }
+        std::sync::Arc::new(athena_providers::providers::openai::OpenAIProvider::new_with_profile(
+            resolved_api_key,
+            resolved_base_url,
+            custom_profile,
+        ))
+    } else {
+        athena_providers::registry::get_provider("openai").unwrap()
+    };
 
     if let Ok(db) = athena_state::db::SessionDB::new(None) {
         let logger = crate::logger::DbSessionLogger {
             db: std::sync::Arc::new(db),
-            model: args.model.clone().unwrap_or_else(|| "gpt-4o".to_string()),
+            model: effective_model,
         };
         builder = builder.logger(std::sync::Arc::new(logger));
     }
@@ -767,6 +838,7 @@ mod tests {
         let args = Args {
             workspace: None,
             model: None,
+            provider: None,
             api_key: Some("dummy_mistral_key".to_string()),
             base_url: None,
             max_turns: None,
@@ -838,6 +910,7 @@ mod tests {
         let args = Args {
             workspace: None,
             model: None,
+            provider: None,
             api_key: Some("dummy_mistral_key".to_string()),
             base_url: Some(format!("{}/v1", mock_server.uri())),
             max_turns: None,
@@ -890,8 +963,9 @@ mod tests {
         }
 
         // Test global flags
-        let args = Args::parse_from(&["athena", "--model", "gpt-4", "chat"]);
+        let args = Args::parse_from(&["athena", "--model", "gpt-4", "-P", "openai", "chat"]);
         assert_eq!(args.model.unwrap(), "gpt-4");
+        assert_eq!(args.provider.unwrap(), "openai");
         assert!(matches!(args.command, Some(Commands::Chat)));
     }
 
@@ -921,6 +995,37 @@ mod tests {
         let args = Args::parse_from(&["athena", "version"]);
         let res = execute_command(args, config.clone()).await;
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_create_agent_builder_provider_resolution() {
+        use clap::Parser;
+        use athena_core::config::AthenaConfig;
+
+        let mut config = AthenaConfig::default();
+        config.model.provider = "gemini".to_string();
+        config.model.default = "gemini-2.5-flash".to_string();
+
+        // 1. With openrouter prefix in model
+        let args = Args::parse_from(&["athena", "-m", "openrouter/anthropic/claude-3.5-sonnet"]);
+        let (builder, provider) = create_agent_builder(&config, &args);
+        assert_eq!(provider.profile().name, "openrouter");
+        let agent = builder.build();
+        assert_eq!(agent.model(), "anthropic/claude-3.5-sonnet");
+
+        // 2. With deepseek prefix in model
+        let args = Args::parse_from(&["athena", "-m", "deepseek/deepseek-chat"]);
+        let (builder, provider) = create_agent_builder(&config, &args);
+        assert_eq!(provider.profile().name, "deepseek");
+        let agent = builder.build();
+        assert_eq!(agent.model(), "deepseek-chat");
+
+        // 3. With explicit provider flag
+        let args = Args::parse_from(&["athena", "-P", "mistral", "-m", "mistral-small"]);
+        let (builder, provider) = create_agent_builder(&config, &args);
+        assert_eq!(provider.profile().name, "mistral");
+        let agent = builder.build();
+        assert_eq!(agent.model(), "mistral-small");
     }
 }
 
