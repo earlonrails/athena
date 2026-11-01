@@ -60,13 +60,16 @@ impl AIAgent {
         let provider_clone = provider.clone();
 
         tokio::spawn(async move {
-            let _ = self_clone.run_conversation_stream(
+            let res = self_clone.run_conversation_stream(
                 &user_msg_clone,
                 sys_msg_clone.as_deref(),
                 &registry_clone,
                 provider_clone,
-                tx
+                tx.clone()
             ).await;
+            if let Err(e) = res {
+                let _ = tx.send(crate::events::AgentEvent::Error(e));
+            }
         });
 
         let mut final_response = String::new();
@@ -648,13 +651,16 @@ mod tests {
     async fn test_run_conversation_api_error() {
         let mock_server = MockServer::start().await;
 
-        let response_body = "data: {\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+        let response_body = serde_json::json!({
+            "error": {
+                "message": "Invalid API key",
+                "type": "BadRequestError"
+            }
+        });
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(200)
-                .set_body_string(response_body)
-                .insert_header("Content-Type", "text/event-stream"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(response_body))
             .mount(&mock_server)
             .await;
 

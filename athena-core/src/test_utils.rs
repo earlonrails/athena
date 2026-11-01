@@ -49,13 +49,12 @@ mod tests {
 
     #[test]
     fn test_env_guard() {
-        let original = std::env::var("ATHENA_HOME").ok();
-        {
-            let guard = EnvGuard::new();
-            guard.set_home("/tmp/athena-test-guard");
-            assert_eq!(std::env::var("ATHENA_HOME").unwrap(), "/tmp/athena-test-guard");
-        }
-        assert_eq!(std::env::var("ATHENA_HOME").ok(), original);
+        let guard = EnvGuard::new();
+        let original = guard.orig_home.clone();
+        guard.set_home("/tmp/athena-test-guard");
+        assert_eq!(std::env::var("ATHENA_HOME").unwrap(), "/tmp/athena-test-guard");
+        drop(guard);
+        assert_eq!(std::env::var_os("ATHENA_HOME"), original);
     }
 }
 

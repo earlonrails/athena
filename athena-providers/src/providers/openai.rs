@@ -4,6 +4,7 @@ use async_openai::{
     types::{CreateChatCompletionRequestArgs, ChatCompletionRequestMessage},
 };
 use async_trait::async_trait;
+use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -46,6 +47,8 @@ pub fn openai_profile() -> ProviderProfile {
 pub struct OpenAIProvider {
     profile: ProviderProfile,
     client: Client<OpenAIConfig>,
+    api_key: Option<String>,
+    base_url: Option<String>,
 }
 
 impl OpenAIProvider {
@@ -63,16 +66,19 @@ impl OpenAIProvider {
             }
         }
         
-        if let Some(key) = resolved_key {
+        if let Some(ref key) = resolved_key {
             config = config.with_api_key(key);
         }
-        if let Some(url) = base_url {
+        if let Some(ref url) = base_url {
             config = config.with_api_base(url);
         }
         
+        let base_url_val = base_url.clone().or_else(|| Some(profile.base_url.clone()));
         Self {
             profile,
             client: Client::with_config(config),
+            api_key: resolved_key,
+            base_url: base_url_val,
         }
     }
     
@@ -89,14 +95,20 @@ impl OpenAIProvider {
             }
         }
         
-        if let Some(key) = resolved_key {
+        if let Some(ref key) = resolved_key {
             config = config.with_api_key(key);
         }
-        if let Some(url) = base_url {
+        if let Some(ref url) = base_url {
             config = config.with_api_base(url);
         }
         
-        Self { profile, client: Client::with_config(config) }
+        let base_url_val = base_url.clone().or_else(|| Some(profile.base_url.clone()));
+        Self {
+            profile,
+            client: Client::with_config(config),
+            api_key: resolved_key,
+            base_url: base_url_val,
+        }
     }
     
     fn map_messages(&self, messages: Vec<ChatMessage>) -> Vec<ChatCompletionRequestMessage> {
@@ -383,78 +395,163 @@ impl LLMProvider for OpenAIProvider {
         let api_request = api_request.build()
             .map_err(|e| ProviderError::ConfigurationError(e.to_string()))?;
         
-        let client = if request.api_key_override.is_some() || request.base_url_override.is_some() {
-            let mut config = self.client.config().clone();
-            if let Some(key) = request.api_key_override {
-                config = config.with_api_key(key);
-            }
-            if let Some(url) = request.base_url_override {
-                config = config.with_api_base(url);
-            }
-            Client::with_config(config)
+        let base_url = request.base_url_override.clone()
+            .or_else(|| self.base_url.clone())
+            .unwrap_or_else(|| self.profile.base_url.clone());
+        let api_key = request.api_key_override.clone()
+            .or_else(|| self.api_key.clone())
+            .unwrap_or_default();
+
+        let url = if base_url.ends_with("/chat/completions") {
+            base_url
+        } else if base_url.ends_with('/') {
+            format!("{}chat/completions", base_url)
         } else {
-            self.client.clone()
+            format!("{}/chat/completions", base_url)
         };
-        
-        let stream = client.chat().create_stream(api_request).await
-            .map_err(|e| ProviderError::StreamingError(e.to_string()))?;
-        
-        // Convert the async-openai stream to our format
-        let converted_stream = stream.map(|chunk| {
-            let chunk = chunk.map_err(|e| ProviderError::StreamingError(e.to_string()))?;
-            
-            let choices = chunk.choices.into_iter().enumerate().map(|(i, choice)| {
-                let delta_content = choice.delta.content.clone().unwrap_or_default();
-                
-                let role = choice.delta.role.as_ref().map(|role| {
-                    match role {
-                        async_openai::types::Role::System => MessageRole::System,
-                        async_openai::types::Role::User => MessageRole::User,
-                        async_openai::types::Role::Assistant => MessageRole::Assistant,
-                        async_openai::types::Role::Tool => MessageRole::Tool,
-                        async_openai::types::Role::Function => MessageRole::Tool,
+
+        let client = reqwest::Client::new();
+        let mut req_builder = client.post(&url);
+        if !api_key.is_empty() {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
+        }
+        req_builder = req_builder
+            .header("Content-Type", "application/json")
+            .header("Accept", "text/event-stream");
+
+        for (k, v) in &self.profile.default_headers {
+            req_builder = req_builder.header(k, v);
+        }
+
+        req_builder = req_builder.json(&api_request);
+
+        let response = match req_builder.send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                return Err(ProviderError::ApiRequestFailed(e.to_string()));
+            }
+        };
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            let err_stream = futures::stream::once(futures::future::ready(
+                Err(ProviderError::ApiRequestFailed(format!("HTTP {}: {}", status, text)))
+            ));
+            return Ok(ChatCompletionStream {
+                response: Box::new(err_stream),
+            });
+        }
+
+        let event_stream = response.bytes_stream().eventsource();
+        let converted_stream = event_stream.map(|event_res| {
+            match event_res {
+                Err(e) => Err(ProviderError::StreamingError(e.to_string())),
+                Ok(event) => {
+                    let data = event.data.trim();
+                    if data == "[DONE]" || data.is_empty() {
+                        Ok(StreamChunk {
+                            id: String::new(),
+                            model: String::new(),
+                            created: None,
+                            choices: Vec::new(),
+                            usage: None,
+                        })
+                    } else {
+                        match serde_json::from_str::<serde_json::Value>(data) {
+                            Err(e) => Err(ProviderError::StreamingError(format!("Failed to parse JSON: {}", e))),
+                            Ok(val) => Ok(parse_openai_stream_chunk(&val)),
+                        }
                     }
-                });
-                
-                let tool_calls = choice.delta.tool_calls.as_ref().map(|tcs| {
-                    tcs.iter().map(|tc| StreamToolCall {
-                        index: Some(tc.index.try_into().unwrap_or(0)),
-                        id: tc.id.clone(),
-                        r#type: tc.r#type.as_ref().map(|t| match t {
-                            async_openai::types::ChatCompletionToolType::Function => "function".to_string(),
-                        }),
-                        function: tc.function.as_ref().map(|f| StreamToolFunction {
-                            name: f.name.clone(),
-                            arguments: f.arguments.clone(),
-                        }),
-                    }).collect()
-                });
-                
-                StreamChoice {
-                    index: i,
-                    delta: StreamDelta {
-                        role,
-                        content: Some(delta_content),
-                        tool_calls,
-                    },
-                    finish_reason: choice.finish_reason.map(|r| {
-                        format!("{:?}", r).to_lowercase()
-                    }),
                 }
-            }).collect();
-            
-            Ok(StreamChunk {
-                id: chunk.id.clone(),
-                model: chunk.model.clone(),
-                created: Some(chunk.created as u64),
-                choices,
-                usage: None,
-            })
+            }
         });
-        
+
         Ok(ChatCompletionStream {
             response: Box::new(converted_stream),
         })
+    }
+}
+
+pub fn parse_openai_stream_chunk(val: &serde_json::Value) -> StreamChunk {
+    let id = val.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let model = val.get("model").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let created = val.get("created").and_then(|v| v.as_u64());
+
+    let mut choices = Vec::new();
+    if let Some(choices_arr) = val.get("choices").and_then(|v| v.as_array()) {
+        for (i, choice_val) in choices_arr.iter().enumerate() {
+            let choice_index = choice_val.get("index").and_then(|v| v.as_u64()).map(|u| u as usize).unwrap_or(i);
+            let finish_reason = choice_val.get("finish_reason").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+            let mut role = None;
+            let mut content = None;
+            let mut tool_calls = None;
+
+            if let Some(delta) = choice_val.get("delta") {
+                if let Some(r) = delta.get("role").and_then(|v| v.as_str()) {
+                    role = Some(match r {
+                        "system" => MessageRole::System,
+                        "user" => MessageRole::User,
+                        "assistant" => MessageRole::Assistant,
+                        "tool" => MessageRole::Tool,
+                        _ => MessageRole::Assistant,
+                    });
+                }
+
+                if let Some(c) = delta.get("content").and_then(|v| v.as_str()) {
+                    content = Some(c.to_string());
+                }
+
+                if let Some(tcs) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+                    let mut tc_list = Vec::new();
+                    for (tc_idx, tc) in tcs.iter().enumerate() {
+                        let idx = tc.get("index")
+                            .and_then(|v| v.as_i64())
+                            .map(|v| v as i32)
+                            .or(Some(tc_idx as i32));
+
+                        let id = tc.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let call_type = tc.get("type").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+                        let function = tc.get("function").map(|fn_obj| {
+                            let fn_name = fn_obj.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            let fn_args = fn_obj.get("arguments").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            StreamToolFunction {
+                                name: fn_name,
+                                arguments: fn_args,
+                            }
+                        });
+
+                        tc_list.push(StreamToolCall {
+                            index: idx,
+                            id,
+                            r#type: call_type,
+                            function,
+                        });
+                    }
+                    tool_calls = Some(tc_list);
+                }
+            }
+
+            choices.push(StreamChoice {
+                index: choice_index,
+                delta: StreamDelta {
+                    role,
+                    content,
+                    tool_calls,
+                },
+                finish_reason,
+            });
+        }
+    }
+
+    StreamChunk {
+        id,
+        model,
+        created,
+        choices,
+        usage: None,
     }
 }
 
@@ -939,6 +1036,50 @@ mod tests {
         
         let chunk2 = stream.next().await.unwrap().unwrap();
         assert_eq!(chunk2.choices[0].delta.role, Some(MessageRole::Tool));
+    }
+
+    #[tokio::test]
+    async fn test_gemini_stream_tool_calls_missing_index() {
+        let mock_server = MockServer::start().await;
+        
+        let sse_data = concat!(
+            "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"extra_content\":{\"google\":{\"thought_signature\":\"xyz\"}},\"function\":{\"arguments\":\"{\\\"command\\\":\\\"ps aux\\\"}\",\"name\":\"run_command\"},\"id\":\"call_506190\",\"type\":\"function\"}]},\"index\":0}],\"created\":1793502391,\"id\":\"tKzmaqvJJNvO\",\"model\":\"gemini-3.6-flash\",\"object\":\"chat.completion.chunk\"}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(sse_data.as_bytes())
+                    .insert_header("Content-Type", "text/event-stream")
+            )
+            .mount(&mock_server)
+            .await;
+
+        let provider = OpenAIProvider::new(Some("test_key".to_string()), Some(mock_server.uri()));
+        
+        let request = ChatCompletionRequest {
+            model: "gemini-3.6-flash".to_string(),
+            messages: vec![ChatMessage {
+                role: MessageRole::User,
+                content: "What processes are running?".to_string(),
+                name: None, tool_calls: None, tool_call_id: None,
+            }],
+            temperature: None, max_tokens: None, top_p: None, stop: None, stream: true, tools: None, tool_choice: None, extra_body: HashMap::new(), api_key_override: None, base_url_override: None,
+        };
+
+        let stream_res = provider.create_chat_completion_stream(request).await.unwrap();
+        let mut stream = stream_res.response;
+        
+        use futures::StreamExt;
+        
+        let chunk = stream.next().await.unwrap().unwrap();
+        let tc = &chunk.choices[0].delta.tool_calls.as_ref().unwrap()[0];
+        assert_eq!(tc.index, Some(0));
+        assert_eq!(tc.id.as_deref(), Some("call_506190"));
+        assert_eq!(tc.function.as_ref().unwrap().name.as_deref(), Some("run_command"));
+        assert_eq!(tc.function.as_ref().unwrap().arguments.as_deref(), Some("{\"command\":\"ps aux\"}"));
     }
 }
 
